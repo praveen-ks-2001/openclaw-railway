@@ -1,22 +1,26 @@
 # ─── Stage 1: Build node-pty (requires native compilation) ─────────────────
 FROM node:22-bookworm-slim AS builder
 
-# node-pty needs python3, make, g++ to compile its native binding
-# git + openssh-client needed because openclaw's deps (baileys → libsignal-node)
-# are fetched via SSH git URLs during npm install.
-# We also rewrite ssh://git@github.com → https://github.com so the build
-# doesn't need GitHub SSH keys configured in the Docker build environment.
+# node-pty needs python3, make, g++ to compile its native binding.
+# git is needed because openclaw's transitive deps (baileys → libsignal-node)
+# reference a GitHub SSH URL.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
     git \
-    && rm -rf /var/lib/apt/lists/* \
-    && git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" \
-    && git config --global url."https://github.com/".insteadOf "git@github.com:"
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
 COPY package.json ./
+
+# Write .npmrc to force HTTPS for all GitHub git deps.
+# npm reads this before resolving any git URLs, so ssh://git@github.com/* → https://github.com/*
+# This prevents "ssh not found" errors in CI/Docker environments without SSH keys.
+RUN printf '[url "https://github.com/"]\n\tinsteadOf = ssh://git@github.com/\n\tinsteadOf = git@github.com:\n' > /root/.gitconfig \
+    && git config --global --list
+
 RUN npm install --omit=dev
 
 
