@@ -2,13 +2,18 @@
 FROM node:22-bookworm-slim AS builder
 
 # node-pty needs python3, make, g++ to compile its native binding
-# git is needed because openclaw has dependencies that npm fetches from git URLs
+# git + openssh-client needed because openclaw's deps (baileys → libsignal-node)
+# are fetched via SSH git URLs during npm install.
+# We also rewrite ssh://git@github.com → https://github.com so the build
+# doesn't need GitHub SSH keys configured in the Docker build environment.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
     git \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && git config --global url."https://github.com/".insteadOf "ssh://git@github.com/" \
+    && git config --global url."https://github.com/".insteadOf "git@github.com:"
 
 WORKDIR /app
 COPY package.json ./
