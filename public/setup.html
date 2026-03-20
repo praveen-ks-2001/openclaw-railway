@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OpenClaw Setup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #0d0f14;
+    --surface:  #14181f;
+    --surface2: #1c2230;
+    --border:   #252d3d;
+    --text:     #c9d1d9;
+    --text-dim: #6b7688;
+    --accent:   #e85d26;
+    --accent2:  #f0883e;
+    --green:    #3fb950;
+    --red:      #f85149;
+    --font-mono: 'IBM Plex Mono', monospace;
+    --font-sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px 80px;
+  }
+
+  /* ── Header ─────────────────────────────────────── */
+  .page-header {
+    text-align: center;
+    margin-bottom: 40px;
+  }
+
+  .lobster {
+    font-size: 48px;
+    line-height: 1;
+    margin-bottom: 12px;
+  }
+
+  h1 {
+    font-family: var(--font-mono);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 8px;
+  }
+
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 14px;
+    line-height: 1.5;
+    max-width: 420px;
+  }
+
+  /* ── Form card ───────────────────────────────────── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+    width: 100%;
+    max-width: 620px;
+    margin-bottom: 16px;
+  }
+
+  .card-title {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-bottom: 20px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .card-title .required-note {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--accent);
+    letter-spacing: 0;
+    text-transform: none;
+  }
+
+  /* ── Form fields ─────────────────────────────────── */
+  .field {
+    margin-bottom: 18px;
+  }
+
+  .field:last-child { margin-bottom: 0; }
+
+  label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+  }
+
+  label .req { color: var(--accent); margin-left: 2px; }
+  label .hint { font-weight: 400; color: var(--text-dim); opacity: 0.7; margin-left: 6px; }
+
+  input[type="text"],
+  input[type="password"],
+  input[type="url"],
+  select,
+  textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    padding: 9px 12px;
+    outline: none;
+    transition: border-color 0.15s;
+    appearance: none;
+  }
+
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--accent);
+  }
+
+  input::placeholder, textarea::placeholder {
+    color: var(--text-dim);
+    opacity: 0.5;
+  }
+
+  textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
+
+  select {
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%236b7688' d='M6 8L0 0h12z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 32px;
+  }
+
+  .field-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  /* ── Collapsible channel sections ────────────────── */
+  .channel-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 0;
+    user-select: none;
+  }
+
+  .channel-toggle input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .channel-toggle-label {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .channel-icon { font-size: 16px; }
+  .channel-body { display: none; padding-top: 16px; }
+  .channel-body.open { display: block; }
+
+  /* ── DM policy helper ────────────────────────────── */
+  .policy-hint {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 5px;
+    font-family: var(--font-mono);
+  }
+
+  /* ── Launch button ───────────────────────────────── */
+  .launch-area {
+    width: 100%;
+    max-width: 620px;
+    text-align: center;
+  }
+
+  .btn-launch {
+    width: 100%;
+    padding: 14px;
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-family: var(--font-mono);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+    letter-spacing: 0.5px;
+  }
+
+  .btn-launch:hover   { background: var(--accent2); }
+  .btn-launch:active  { transform: scale(0.99); }
+  .btn-launch:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+  /* ── Progress / status ───────────────────────────── */
+  #launch-status {
+    margin-top: 16px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    color: var(--text-dim);
+    display: none;
+    text-align: center;
+  }
+
+  #launch-status.ok  { color: var(--green); display: block; }
+  #launch-status.err { color: var(--red);   display: block; }
+  #launch-status.running { display: block; }
+
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    vertical-align: middle;
+    margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Error list ──────────────────────────────────── */
+  #error-list {
+    background: rgba(248,81,73,0.08);
+    border: 1px solid var(--red);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-bottom: 16px;
+    display: none;
+    width: 100%;
+    max-width: 620px;
+  }
+  #error-list.visible { display: block; }
+  #error-list ul { list-style: none; }
+  #error-list li {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--red);
+    padding: 3px 0;
+  }
+  #error-list li::before { content: '✗  '; }
+
+  /* ── Scrollbar ───────────────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <div class="lobster">🦞</div>
+  <h1>OpenClaw Setup</h1>
+  <p class="subtitle">Configure your personal AI assistant. Fill in at least one model provider API key and one messaging channel to get started.</p>
+</div>
+
+<div id="error-list"><ul id="error-items"></ul></div>
+
+<!-- Card 1: Model Provider -->
+<div class="card">
+  <div class="card-title">
+    🤖 Model Provider
+    <span class="required-note">* at least one required</span>
+  </div>
+
+  <div class="field">
+    <label for="model">Primary Model</label>
+    <select id="model" name="model">
+      <optgroup label="Anthropic">
+        <option value="anthropic/claude-opus-4-6" selected>claude-opus-4-6 (best)</option>
+        <option value="anthropic/claude-sonnet-4-6">claude-sonnet-4-6 (fast)</option>
+        <option value="anthropic/claude-haiku-4-5">claude-haiku-4-5 (fastest)</option>
+      </optgroup>
+      <optgroup label="OpenAI">
+        <option value="openai/gpt-5.2">gpt-5.2</option>
+        <option value="openai/gpt-4.1">gpt-4.1</option>
+        <option value="openai/gpt-4.1-mini">gpt-4.1-mini</option>
+      </optgroup>
+      <optgroup label="Google">
+        <option value="google/gemini-2.5-pro">gemini-2.5-pro</option>
+        <option value="google/gemini-2.0-flash">gemini-2.0-flash</option>
+      </optgroup>
+      <optgroup label="OpenRouter">
+        <option value="openrouter/auto">openrouter/auto</option>
+      </optgroup>
+    </select>
+  </div>
+
+  <div class="field-row">
+    <div class="field">
+      <label for="anthropicApiKey">Anthropic API Key <span class="hint">sk-ant-...</span></label>
+      <input type="password" id="anthropicApiKey" name="anthropicApiKey" placeholder="sk-ant-api03-..." autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="openaiApiKey">OpenAI API Key <span class="hint">sk-...</span></label>
+      <input type="password" id="openaiApiKey" name="openaiApiKey" placeholder="sk-..." autocomplete="off">
+    </div>
+  </div>
+
+  <div class="field-row">
+    <div class="field">
+      <label for="openrouterApiKey">OpenRouter API Key</label>
+      <input type="password" id="openrouterApiKey" name="openrouterApiKey" placeholder="sk-or-..." autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="googleApiKey">Google API Key</label>
+      <input type="password" id="googleApiKey" name="googleApiKey" placeholder="AIza..." autocomplete="off">
+    </div>
+  </div>
+</div>
+
+<!-- Card 2: Channels -->
+<div class="card">
+  <div class="card-title">💬 Channels</div>
+
+  <!-- Telegram -->
+  <div class="channel-toggle" onclick="toggleChannel('telegram', event)">
+    <input type="checkbox" id="ch-telegram" onchange="toggleChannel('telegram', event)">
+    <span class="channel-icon">✈️</span>
+    <span class="channel-toggle-label">Telegram</span>
+  </div>
+  <div class="channel-body" id="body-telegram">
+    <div class="field">
+      <label for="telegramBotToken">Bot Token <span class="req">*</span></label>
+      <input type="password" id="telegramBotToken" name="telegramBotToken" placeholder="123456789:AABBccdd..." autocomplete="off">
+    </div>
+    <div class="field-row">
+      <div class="field">
+        <label for="telegramDmPolicy">DM Policy</label>
+        <select id="telegramDmPolicy" name="telegramDmPolicy">
+          <option value="pairing" selected>pairing (recommended)</option>
+          <option value="allowlist">allowlist</option>
+          <option value="open">open (all DMs)</option>
+          <option value="disabled">disabled</option>
+        </select>
+        <div class="policy-hint" id="policy-hint-telegram">Unknown senders must request pairing first</div>
+      </div>
+      <div class="field">
+        <label for="telegramAllowFrom">Allow From <span class="hint">optional</span></label>
+        <input type="text" id="telegramAllowFrom" name="telegramAllowFrom" placeholder="tg:123456, tg:789012">
+      </div>
+    </div>
+  </div>
+
+  <!-- Discord -->
+  <div class="channel-toggle" style="margin-top:4px" onclick="toggleChannel('discord', event)">
+    <input type="checkbox" id="ch-discord" onchange="toggleChannel('discord', event)">
+    <span class="channel-icon">🎮</span>
+    <span class="channel-toggle-label">Discord</span>
+  </div>
+  <div class="channel-body" id="body-discord">
+    <div class="field">
+      <label for="discordBotToken">Bot Token <span class="req">*</span></label>
+      <input type="password" id="discordBotToken" name="discordBotToken" placeholder="MTxxxxx.xxx.xxx" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="discordDmPolicy">DM Policy</label>
+      <select id="discordDmPolicy" name="discordDmPolicy">
+        <option value="pairing" selected>pairing (recommended)</option>
+        <option value="allowlist">allowlist</option>
+        <option value="open">open</option>
+        <option value="disabled">disabled</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Slack -->
+  <div class="channel-toggle" style="margin-top:4px" onclick="toggleChannel('slack', event)">
+    <input type="checkbox" id="ch-slack" onchange="toggleChannel('slack', event)">
+    <span class="channel-icon">💼</span>
+    <span class="channel-toggle-label">Slack</span>
+  </div>
+  <div class="channel-body" id="body-slack">
+    <div class="field-row">
+      <div class="field">
+        <label for="slackBotToken">Bot Token <span class="req">*</span> <span class="hint">xoxb-...</span></label>
+        <input type="password" id="slackBotToken" name="slackBotToken" placeholder="xoxb-..." autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="slackAppToken">App Token <span class="req">*</span> <span class="hint">xapp-...</span></label>
+        <input type="password" id="slackAppToken" name="slackAppToken" placeholder="xapp-..." autocomplete="off">
+      </div>
+    </div>
+  </div>
+
+  <!-- Mattermost -->
+  <div class="channel-toggle" style="margin-top:4px" onclick="toggleChannel('mattermost', event)">
+    <input type="checkbox" id="ch-mattermost" onchange="toggleChannel('mattermost', event)">
+    <span class="channel-icon">🔷</span>
+    <span class="channel-toggle-label">Mattermost</span>
+  </div>
+  <div class="channel-body" id="body-mattermost">
+    <div class="field-row">
+      <div class="field">
+        <label for="mattermostUrl">Server URL <span class="req">*</span></label>
+        <input type="url" id="mattermostUrl" name="mattermostUrl" placeholder="https://mattermost.example.com">
+      </div>
+      <div class="field">
+        <label for="mattermostToken">Access Token <span class="req">*</span></label>
+        <input type="password" id="mattermostToken" name="mattermostToken" autocomplete="off">
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Card 3: Gateway & Session -->
+<div class="card">
+  <div class="card-title">⚙️ Gateway & Session</div>
+
+  <div class="field-row">
+    <div class="field">
+      <label for="gatewayToken">Gateway Token <span class="hint">auto-generated if blank</span></label>
+      <input type="password" id="gatewayToken" name="gatewayToken" placeholder="leave blank to auto-generate" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="sessionScope">Session Scope</label>
+      <select id="sessionScope" name="sessionScope">
+        <option value="per-channel-peer" selected>per-channel-peer (recommended)</option>
+        <option value="per-peer">per-peer</option>
+        <option value="main">main (shared)</option>
+        <option value="per-account-channel-peer">per-account-channel-peer</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="field-row">
+    <div class="field">
+      <label for="heartbeatEvery">Heartbeat <span class="hint">e.g. 30m, 2h</span></label>
+      <input type="text" id="heartbeatEvery" name="heartbeatEvery" placeholder="30m">
+    </div>
+    <div class="field">
+      <label for="sessionResetMode">Session Reset</label>
+      <select id="sessionResetMode" name="sessionResetMode">
+        <option value="">off</option>
+        <option value="daily">daily</option>
+        <option value="idle">on idle</option>
+      </select>
+    </div>
+  </div>
+</div>
+
+<!-- Launch -->
+<div class="launch-area">
+  <button class="btn-launch" id="btn-launch" onclick="launch()">
+    🦞 Launch OpenClaw
+  </button>
+  <div id="launch-status"></div>
+</div>
+
+<script>
+// ── Channel toggles ───────────────────────────────────────────────
+function toggleChannel(name, event) {
+  // Don't double-fire when clicking the checkbox directly
+  if (event.type === 'click' && event.target.tagName === 'INPUT') return;
+
+  const cb   = document.getElementById('ch-' + name);
+  const body = document.getElementById('body-' + name);
+
+  if (event.target === cb) {
+    body.classList.toggle('open', cb.checked);
+  } else {
+    cb.checked = !cb.checked;
+    body.classList.toggle('open', cb.checked);
+  }
+}
+
+// ── Policy hints ──────────────────────────────────────────────────
+const policyHints = {
+  pairing:   'Unknown senders must request pairing first',
+  allowlist: 'Only senders in the allow list can message',
+  open:      'All inbound DMs are accepted — use with caution',
+  disabled:  'All inbound DMs are ignored',
+};
+
+document.querySelectorAll('select[id$="DmPolicy"]').forEach(sel => {
+  const chanName = sel.id.replace('DmPolicy','').toLowerCase();
+  const hint = document.getElementById('policy-hint-' + chanName);
+  if (!hint) return;
+  sel.addEventListener('change', () => {
+    hint.textContent = policyHints[sel.value] || '';
+  });
+});
+
+// ── Form collection ───────────────────────────────────────────────
+function collectForm() {
+  const data = {};
+  document.querySelectorAll('input[name], select[name], textarea[name]').forEach(el => {
+    data[el.name] = el.value;
+  });
+  return data;
+}
+
+// ── Launch ────────────────────────────────────────────────────────
+async function launch() {
+  const btn    = document.getElementById('btn-launch');
+  const status = document.getElementById('launch-status');
+  const errBox = document.getElementById('error-list');
+  const errItems = document.getElementById('error-items');
+
+  btn.disabled = true;
+  status.className = 'running';
+  status.innerHTML = '<span class="spinner"></span> Saving config and launching gateway…';
+  errBox.classList.remove('visible');
+
+  const body = collectForm();
+
+  try {
+    const res = await fetch('/setup/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+      // Validation errors
+      if (data.errors && data.errors.length) {
+        errItems.innerHTML = data.errors.map(e => `<li>${escHtml(e)}</li>`).join('');
+        errBox.classList.add('visible');
+        status.className = '';
+        status.style.display = 'none';
+        btn.disabled = false;
+        return;
+      }
+      throw new Error(data.error || 'Unknown error');
+    }
+
+    // Success — poll for gateway state
+    status.className = 'running';
+    status.innerHTML = '<span class="spinner"></span> Gateway starting… watching for ready state…';
+
+    await pollUntilRunning();
+
+    status.className = 'ok';
+    status.textContent = '✓ Gateway is running! Redirecting to admin…';
+
+    setTimeout(() => { window.location.href = '/admin'; }, 1500);
+
+  } catch (err) {
+    status.className = 'err';
+    status.textContent = '✗ ' + err.message;
+    btn.disabled = false;
+  }
+}
+
+async function pollUntilRunning(attempts = 0) {
+  if (attempts > 60) throw new Error('Gateway did not start within 60 seconds');
+
+  const res  = await fetch('/api/status').catch(() => null);
+  if (res && res.ok) {
+    const data = await res.json().catch(() => ({}));
+    if (data.state === 'running') return;
+    if (data.state === 'crashed') throw new Error('Gateway crashed during startup. Check logs at /admin.');
+  }
+
+  await new Promise(r => setTimeout(r, 1000));
+  return pollUntilRunning(attempts + 1);
+}
+
+function escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+</script>
+</body>
+</html>
