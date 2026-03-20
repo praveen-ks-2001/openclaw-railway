@@ -106,15 +106,12 @@ function buildGatewaySection(formData) {
     section.auth = {
       mode: 'token',
       token: formData.gatewayToken,
-      // Allow insecure auth since we're behind our own proxy
-      allowInsecureAuth: true,
     };
   }
 
   // Allow the wrapper's origin to access the Control UI
   section.controlUi = {
-    allowedOrigins: ['*'], // wrapper proxy normalizes this
-    // Disable device auth — our wrapper handles the external auth layer
+    allowedOrigins: ['*'],
     dangerouslyDisableDeviceAuth: true,
   };
 
