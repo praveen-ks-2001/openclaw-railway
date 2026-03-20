@@ -119,28 +119,20 @@ class GatewayManager extends EventEmitter {
     httpServer.on('upgrade', (req, socket, head) => {
       const url = req.url || '';
 
-      // /ws/* paths are our own WSS instances (e.g. /ws/terminal) — don't intercept
-      if (url.startsWith('/ws/')) {
-        return;
-      }
+      // /ws/* are our own WSS instances (terminal etc.) — don't intercept
+      if (url.startsWith('/ws/')) return;
 
-      // Only proxy if gateway is running
       if (!this.isRunning()) {
         socket.write('HTTP/1.1 503 Service Unavailable\r\n\r\n');
         socket.destroy();
         return;
       }
 
-      // Strip /ui prefix if present.
-      // The openclaw Control UI loads at /ui/ but its JS constructs WebSocket URLs
-      // relative to the page origin (e.g. wss://host/?token=xxx with no /ui prefix),
-      // so we must proxy BOTH /ui/* and /* (except /ws/*) to the gateway.
-      req.url = url.startsWith('/ui') ? (url.replace(/^\/ui/, '') || '/') : url;
-
-      // Correct the host header so openclaw accepts the connection
+      // Pass URL through unmodified — openclaw is now at root so the browser
+      // connects to wss://host/?token=xxx and we forward exactly as received.
       req.headers.host = `${GATEWAY_HOST}:${GATEWAY_PORT}`;
 
-      log.info(`WS proxying: ${url} → ${GATEWAY_WS_URL}${req.url}`);
+      log.info(`WS proxying: ${url} → ${GATEWAY_WS_URL}${url}`);
 
       this._httpProxy.ws(req, socket, head, { target: GATEWAY_WS_URL }, (err) => {
         if (err) {
