@@ -33,10 +33,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export const apiRoutes = Router();
 
-// All /api/* routes require admin auth if WRAPPER_ADMIN_PASSWORD is set
-apiRoutes.use(requireAdminAuth);
-
-// ── Status ────────────────────────────────────────────────────────
+// ── Public endpoints (no auth) — needed for Railway healthcheck ───
+// These must be registered BEFORE the requireAdminAuth middleware.
 
 apiRoutes.get('/status', (req, res) => {
   res.json({
@@ -48,6 +46,9 @@ apiRoutes.get('/status', (req, res) => {
     ts: new Date().toISOString(),
   });
 });
+
+// ── Protected routes — everything below requires admin auth ────────
+apiRoutes.use(requireAdminAuth);
 
 // ── Logs ──────────────────────────────────────────────────────────
 
