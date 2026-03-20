@@ -30,18 +30,19 @@ const sessions = new Map();
 let sessionCounter = 0;
 
 /**
- * Attach a WebSocket server to handle terminal connections.
- * Mounted at path /ws/terminal on the HTTP server.
+ * Creates a WebSocket server for terminal connections.
+ * Uses noServer mode — the caller (server.js) must route upgrade
+ * requests to terminalWss.handleUpgrade() manually.
  *
- * @param {import('http').Server} httpServer
+ * IMPORTANT: We must NOT use { server: httpServer } because the ws
+ * library auto-registers an upgrade handler that calls abortHandshake(400)
+ * for non-matching paths, which destroys the socket before the gateway
+ * WS proxy handler can forward it. noServer avoids this.
  */
-export function attachTerminalWebSocket(httpServer) {
-  const wss = new WebSocketServer({
-    server: httpServer,
-    path: '/ws/terminal',
-  });
+export const terminalWss = new WebSocketServer({ noServer: true });
 
-  wss.on('connection', (ws, req) => {
+export function attachTerminalWebSocket(httpServer) {
+  terminalWss.on('connection', (ws, req) => {
     if (sessions.size >= MAX_SESSIONS) {
       ws.send(JSON.stringify({
         type: 'output',
@@ -158,7 +159,7 @@ export function attachTerminalWebSocket(httpServer) {
     });
   });
 
-  wss.on('error', (err) => {
+  terminalWss.on('error', (err) => {
     log.error('Terminal WebSocket server error:', err.message);
   });
 
