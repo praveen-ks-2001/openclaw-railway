@@ -540,6 +540,7 @@ async function launch() {
     const res = await fetch('/setup/save', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify(body),
     });
 

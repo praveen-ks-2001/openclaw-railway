@@ -641,6 +641,7 @@ function toast(msg, type = '') {
 async function api(path, opts = {}) {
   const res = await fetch('/api' + path, {
     headers: { 'Content-Type': 'application/json' },
+    credentials: 'include',
     ...opts,
   });
   if (!res.ok) {
