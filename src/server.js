@@ -91,14 +91,21 @@ async function main() {
     });
   });
 
-  // Root routing
-  app.get('/', (req, res) => {
-    if (gatewayManager.isRunning()) {
-      return res.redirect('/ui/');
-    }
+  // Root routing — when gateway is running, proxy openclaw UI at /.
+  // When not configured, redirect to /setup.
+  // Our own routes (/admin, /setup, /api, /login, /ws) take priority
+  // because they are registered first above.
+  app.get('/', (req, res, next) => {
+    if (gatewayManager.isRunning()) return next(); // fall through to proxy below
     res.redirect('/setup');
   });
 
+  // /ui/* kept for backwards compat — redirect to /
+  app.use('/ui', (req, res) => res.redirect('/' + (req.url || '').replace(/^\//, '')));
+
+  // Proxy everything else to the openclaw gateway when it's running.
+  // This covers /, /assets/*, /__openclaw/*, and the WS upgrade at /.
+  app.use('/', proxyMiddleware);
   // Login page — serves form, handles POST
   app.get('/login', (req, res) => {
     if (!config.WRAPPER_ADMIN_PASSWORD) return res.redirect('/admin');
@@ -151,14 +158,6 @@ ${req.query.err ? '<p class="err">Incorrect password</p>' : ''}
     }
     res.sendFile(path.join(__dirname, '../public/admin.html'));
   });
-
-  // Proxy /ui/* → openclaw gateway (HTML, CSS, JS assets loaded via /ui prefix)
-  app.use('/ui', proxyMiddleware);
-
-  // Proxy paths that openclaw's JS requests without the /ui prefix.
-  // The Control UI constructs some URLs relative to origin (e.g. /assets/*, /__openclaw/*).
-  app.use('/assets', proxyMiddleware);
-  app.use('/__openclaw', proxyMiddleware);
 
   // ── WebSocket services ─────────────────────────────────────────
   attachTerminalWebSocket(httpServer);

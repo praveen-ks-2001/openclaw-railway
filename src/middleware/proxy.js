@@ -1,11 +1,11 @@
 /**
  * middleware/proxy.js
  *
- * Reverse proxies /ui/*, /assets/*, /__openclaw/* → http://127.0.0.1:18789/*
+ * Reverse proxies all unmatched requests → http://127.0.0.1:18789
  *
- * When mounted at /ui, Express strips the /ui prefix from req.url.
- * We use req.originalUrl and strip only the /ui prefix so the gateway
- * always sees the correct full path.
+ * openclaw's Control UI is designed to be served at root (/), so we
+ * pass URLs through unmodified. Our own routes (/admin, /setup, /api,
+ * /login, /ws) are registered first in server.js and never reach here.
  *
  * Only active when gateway is running. Returns 503 otherwise.
  */
@@ -15,16 +15,12 @@ import { gatewayManager } from '../services/gatewayManager.js';
 
 export function proxyMiddleware(req, res, next) {
   if (!gatewayManager.isRunning()) {
-    return res.status(503).json({
-      error: 'Gateway not running',
-      state: gatewayManager.getState(),
-    });
+    // Don't 503 on GET / when not configured — let the redirect handler above handle it
+    return next();
   }
 
-  // req.originalUrl has the full path (e.g. /ui/assets/foo.js or /assets/foo.js).
-  // Strip the /ui prefix so the gateway receives /assets/foo.js or /foo.js.
-  // Paths that don't start with /ui (e.g. /assets/*, /__openclaw/*) pass through as-is.
-  req.url = req.originalUrl.replace(/^\/ui/, '') || '/';
+  // Pass the full original URL through unchanged
+  req.url = req.originalUrl;
 
   const proxy = gatewayManager.getHttpProxy();
   proxy.web(req, res, { target: GATEWAY_INTERNAL_URL });
