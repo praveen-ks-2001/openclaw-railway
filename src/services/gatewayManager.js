@@ -13,14 +13,12 @@
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import httpProxy from 'http-proxy';
-import { WebSocketServer } from 'ws';
 import net from 'net';
 import {
   GATEWAY_PORT,
   GATEWAY_HOST,
   GATEWAY_INTERNAL_URL,
   GATEWAY_WS_URL,
-  OPENCLAW_HOME,
   OPENCLAW_STATE_DIR,
   DATA_DIR,
 } from '../config/index.js';
@@ -42,10 +40,8 @@ class GatewayManager extends EventEmitter {
     this._restartCount = 0;
     this._restartTimer = null;
     this._logs = []; // rolling last 500 lines
-    this._wsProxy = null;
     this._httpProxy = httpProxy.createProxyServer({
       target: GATEWAY_INTERNAL_URL,
-      ws: true,
       changeOrigin: false,
     });
 
@@ -114,6 +110,11 @@ class GatewayManager extends EventEmitter {
    * Called from server.js — attaches WebSocket proxy so the wrapper's
    * HTTP server can forward WS connections to openclaw's gateway port.
    * This covers both the Control UI websocket AND the webchat websocket.
+   *
+   * Uses raw TCP socket piping instead of http-proxy.ws() because
+   * http-proxy v1.18.1 has broken WS frame forwarding on Node 22 —
+   * the upgrade succeeds but data frames never flow, causing openclaw's
+   * challenge-response handshake to time out.
    */
   attachWebSocketProxy(httpServer) {
     httpServer.on('upgrade', (req, socket, head) => {
@@ -128,18 +129,48 @@ class GatewayManager extends EventEmitter {
         return;
       }
 
-      // Pass URL through unmodified — openclaw is now at root so the browser
-      // connects to wss://host/?token=xxx and we forward exactly as received.
-      req.headers.host = `${GATEWAY_HOST}:${GATEWAY_PORT}`;
-
       log.info(`WS proxying: ${url} → ${GATEWAY_WS_URL}${url}`);
 
-      this._httpProxy.ws(req, socket, head, { target: GATEWAY_WS_URL }, (err) => {
-        if (err) {
-          log.warn(`WS proxy error for ${url}: ${err.message}`);
-          socket.destroy();
+      // Raw TCP connection to openclaw gateway — bypasses http-proxy's
+      // broken WS piping so frames actually flow in both directions.
+      const proxySocket = net.connect(GATEWAY_PORT, GATEWAY_HOST, () => {
+        // Reconstruct the HTTP upgrade request using rawHeaders (preserves casing)
+        let raw = `${req.method} ${url} HTTP/${req.httpVersion}\r\n`;
+        for (let i = 0; i < req.rawHeaders.length; i += 2) {
+          const key = req.rawHeaders[i];
+          const val = req.rawHeaders[i + 1];
+          if (key.toLowerCase() === 'host') {
+            raw += `${key}: ${GATEWAY_HOST}:${GATEWAY_PORT}\r\n`;
+          } else {
+            raw += `${key}: ${val}\r\n`;
+          }
         }
+        raw += '\r\n';
+
+        proxySocket.write(raw);
+
+        // Forward any buffered data (may contain the first WS frame)
+        if (head && head.length > 0) {
+          proxySocket.write(head);
+        }
+
+        // Bidirectional pipe — gateway's 101 response + challenge frames
+        // flow to the client, client's connect/auth frames flow to gateway
+        proxySocket.pipe(socket);
+        socket.pipe(proxySocket);
       });
+
+      proxySocket.on('error', (err) => {
+        log.warn(`WS proxy error for ${url}: ${err.message}`);
+        socket.destroy();
+      });
+
+      socket.on('error', () => {
+        proxySocket.destroy();
+      });
+
+      socket.on('close', () => proxySocket.destroy());
+      proxySocket.on('close', () => socket.destroy());
     });
   }
 
