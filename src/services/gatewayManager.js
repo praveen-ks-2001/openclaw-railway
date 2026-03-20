@@ -128,13 +128,29 @@ class GatewayManager extends EventEmitter {
 
       // Only proxy if we're actually running
       if (!this.isRunning()) {
+        socket.write('HTTP/1.1 503 Service Unavailable\r\n\r\n');
         socket.destroy();
         return;
       }
 
-      // Strip /ui prefix before forwarding
+      // Strip /ui prefix before forwarding to openclaw's internal port
+      // e.g. /ui/something → /something, /ui → /
       req.url = url.replace(/^\/ui/, '') || '/';
-      this._httpProxy.ws(req, socket, head);
+
+      // Set the host header to the internal gateway so openclaw accepts the connection
+      req.headers.host = `${GATEWAY_HOST}:${GATEWAY_PORT}`;
+
+      this._httpProxy.ws(req, socket, head, { target: GATEWAY_WS_URL }, (err) => {
+        if (err) {
+          log.warn(`WS proxy error for ${url}: ${err.message}`);
+          socket.destroy();
+        }
+      });
+    });
+
+    // Log proxy-level WS errors so they're visible in /admin logs
+    this._httpProxy.on('proxyReqWs', (proxyReq, req) => {
+      log.info(`WS proxying: ${req.url} → ${GATEWAY_WS_URL}`);
     });
   }
 

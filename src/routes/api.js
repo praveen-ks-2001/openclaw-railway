@@ -23,6 +23,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import { config } from '../config/index.js';
+import { OPENCLAW_GATEWAY_TOKEN } from '../config/index.js';
 import { gatewayManager } from '../services/gatewayManager.js';
 import { pairingService } from '../services/pairingService.js';
 import { getActiveSessionCount } from '../services/terminalService.js';
@@ -43,6 +44,7 @@ apiRoutes.get('/status', (req, res) => {
     configured: true,
     uptime: process.uptime(),
     terminalSessions: getActiveSessionCount(),
+    gatewayToken: OPENCLAW_GATEWAY_TOKEN || null,
     ts: new Date().toISOString(),
   });
 });

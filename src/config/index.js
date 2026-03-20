@@ -30,6 +30,11 @@ export const PORT = parseInt(process.env.PORT || '3000', 10);
 // Set WRAPPER_ADMIN_PASSWORD in Railway env vars.
 export const WRAPPER_ADMIN_PASSWORD = process.env.WRAPPER_ADMIN_PASSWORD || null;
 
+// Gateway token for openclaw's own auth layer.
+// Set OPENCLAW_GATEWAY_TOKEN in Railway env vars.
+// Displayed in /admin so you can paste it into the openclaw UI login.
+export const OPENCLAW_GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN || null;
+
 export const config = {
   DATA_DIR,
   OPENCLAW_HOME,
@@ -42,6 +47,7 @@ export const config = {
   GATEWAY_WS_URL,
   PORT,
   WRAPPER_ADMIN_PASSWORD,
+  OPENCLAW_GATEWAY_TOKEN,
 
   async isAlreadyConfigured() {
     try {
