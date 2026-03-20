@@ -73,6 +73,8 @@ export function buildEnvVars(formData) {
   return env;
 }
 
+import { OPENCLAW_GATEWAY_TOKEN } from '../config/index.js';
+
 // ─── Section builders ──────────────────────────────────────────────
 
 function buildAgentsSection(formData) {
@@ -103,13 +105,18 @@ function buildGatewaySection(formData) {
     reload: { mode: 'hybrid' },
   };
 
-  // Gateway auth — token protects the Control UI
-  if (formData.gatewayToken) {
+  // Gateway token — use env var if set, fall back to form value, otherwise no auth
+  const token = OPENCLAW_GATEWAY_TOKEN || formData.gatewayToken || null;
+  if (token) {
     section.auth = {
       mode: 'token',
-      token: formData.gatewayToken,
+      token,
     };
   }
+
+  // Trust our Express wrapper on loopback — fixes "Proxy headers from untrusted address" warning
+  // and restores local client detection for WebSocket connections
+  section.trustedProxies = ['127.0.0.1', '::1'];
 
   // Allow the wrapper's origin to access the Control UI
   section.controlUi = {

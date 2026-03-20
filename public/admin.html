@@ -516,6 +516,21 @@
           <button class="btn danger"  onclick="gatewayAction('stop')">■ Stop Gateway</button>
           <button class="btn" onclick="navigate('terminal')">$ Open Terminal</button>
           <button class="btn" onclick="window.location='/setup'">✎ Reconfigure</button>
+          <a class="btn" href="/ui" target="_blank" rel="noopener">↗ Open OpenClaw UI</a>
+        </div>
+
+        <!-- Gateway token display — shown only when OPENCLAW_GATEWAY_TOKEN is set -->
+        <div id="token-card" style="display:none; margin-top:20px; background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:16px 20px;">
+          <div style="font-size:12px; color:var(--text-dim); margin-bottom:8px; font-family:var(--font-mono); letter-spacing:0.05em; text-transform:uppercase;">Gateway Token</div>
+          <div style="font-size:12px; color:var(--text-dim); margin-bottom:10px;">Paste this into the OpenClaw UI login screen when prompted for a Gateway Token.</div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <input id="token-value" type="password" readonly
+              style="flex:1; background:var(--bg); border:1px solid var(--border); border-radius:6px;
+                     color:var(--text); font-family:var(--font-mono); font-size:13px; padding:8px 12px; outline:none;"
+              value="">
+            <button class="btn sm" onclick="toggleTokenVisibility()" id="token-toggle-btn" title="Show/hide token">👁</button>
+            <button class="btn sm" onclick="copyToken()" id="token-copy-btn">Copy</button>
+          </div>
         </div>
       </div>
     </div>
@@ -669,6 +684,18 @@ async function refreshStatus() {
     const upSec = Math.floor(data.uptime || 0);
     document.getElementById('st-uptime').textContent = formatUptime(upSec);
     document.getElementById('st-terms').textContent = data.terminalSessions ?? '—';
+
+    // Show gateway token card if token is configured
+    const tokenCard = document.getElementById('token-card');
+    const tokenInput = document.getElementById('token-value');
+    if (data.gatewayToken) {
+      tokenCard.style.display = 'block';
+      if (tokenInput.value !== data.gatewayToken) {
+        tokenInput.value = data.gatewayToken;
+      }
+    } else {
+      tokenCard.style.display = 'none';
+    }
   } catch (e) {
     document.getElementById('st-state').textContent = 'error';
   }
@@ -680,6 +707,31 @@ async function refreshStatus() {
     document.getElementById('st-pairs').textContent = count;
     updatePairingBadge(count);
   } catch {}
+}
+
+function toggleTokenVisibility() {
+  const input = document.getElementById('token-value');
+  const btn = document.getElementById('token-toggle-btn');
+  if (input.type === 'password') {
+    input.type = 'text';
+    btn.textContent = '🙈';
+  } else {
+    input.type = 'password';
+    btn.textContent = '👁';
+  }
+}
+
+async function copyToken() {
+  const val = document.getElementById('token-value').value;
+  if (!val) return;
+  try {
+    await navigator.clipboard.writeText(val);
+    const btn = document.getElementById('token-copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+  } catch {
+    toast('Copy failed — try selecting manually', 'err');
+  }
 }
 
 async function gatewayAction(action) {
