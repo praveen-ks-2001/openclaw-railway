@@ -52,9 +52,7 @@ async function main() {
   app.use(express.urlencoded({ extended: true }));
   app.use(requestLogger);
 
-  // Static assets
-  app.use('/assets', express.static(path.join(__dirname, '../public/assets')));
-
+  // Static files for wrapper UI (setup/admin pages)
   // ── Routes ─────────────────────────────────────────────────────
 
   // Internal management API — always available
@@ -154,8 +152,13 @@ ${req.query.err ? '<p class="err">Incorrect password</p>' : ''}
     res.sendFile(path.join(__dirname, '../public/admin.html'));
   });
 
-  // Proxy /ui/* → openclaw gateway
+  // Proxy /ui/* → openclaw gateway (HTML, CSS, JS assets loaded via /ui prefix)
   app.use('/ui', proxyMiddleware);
+
+  // Proxy paths that openclaw's JS requests without the /ui prefix.
+  // The Control UI constructs some URLs relative to origin (e.g. /assets/*, /__openclaw/*).
+  app.use('/assets', proxyMiddleware);
+  app.use('/__openclaw', proxyMiddleware);
 
   // ── WebSocket services ─────────────────────────────────────────
   attachTerminalWebSocket(httpServer);
