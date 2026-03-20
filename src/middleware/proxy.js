@@ -1,7 +1,11 @@
 /**
  * middleware/proxy.js
  *
- * Reverse proxies /ui/* → http://127.0.0.1:18789/*
+ * Reverse proxies /ui/*, /assets/*, /__openclaw/* → http://127.0.0.1:18789/*
+ *
+ * When mounted at /ui, Express strips the /ui prefix from req.url.
+ * We use req.originalUrl and strip only the /ui prefix so the gateway
+ * always sees the correct full path.
  *
  * Only active when gateway is running. Returns 503 otherwise.
  */
@@ -17,8 +21,10 @@ export function proxyMiddleware(req, res, next) {
     });
   }
 
-  // Strip the /ui prefix before forwarding
-  req.url = req.url.replace(/^\/ui/, '') || '/';
+  // req.originalUrl has the full path (e.g. /ui/assets/foo.js or /assets/foo.js).
+  // Strip the /ui prefix so the gateway receives /assets/foo.js or /foo.js.
+  // Paths that don't start with /ui (e.g. /assets/*, /__openclaw/*) pass through as-is.
+  req.url = req.originalUrl.replace(/^\/ui/, '') || '/';
 
   const proxy = gatewayManager.getHttpProxy();
   proxy.web(req, res, { target: GATEWAY_INTERNAL_URL });

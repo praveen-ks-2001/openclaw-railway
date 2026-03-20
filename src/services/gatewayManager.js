@@ -116,30 +116,31 @@ class GatewayManager extends EventEmitter {
    * This covers both the Control UI websocket AND the webchat websocket.
    */
   attachWebSocketProxy(httpServer) {
-    // Proxy upgrade events (standard WS over HTTP/1.1)
-    // IMPORTANT: Only proxy /ui/* upgrades — leave /ws/* for their own WSS instances
     httpServer.on('upgrade', (req, socket, head) => {
       const url = req.url || '';
 
-      // /ws/* paths are handled by their own WebSocketServer instances (e.g. /ws/terminal)
-      // Do NOT intercept them here — let them reach their own WSS
+      // /ws/* paths are our own WSS instances (e.g. /ws/terminal) — don't intercept
       if (url.startsWith('/ws/')) {
         return;
       }
 
-      // Only proxy if we're actually running
+      // Only proxy if gateway is running
       if (!this.isRunning()) {
         socket.write('HTTP/1.1 503 Service Unavailable\r\n\r\n');
         socket.destroy();
         return;
       }
 
-      // Strip /ui prefix before forwarding to openclaw's internal port
-      // e.g. /ui/something → /something, /ui → /
-      req.url = url.replace(/^\/ui/, '') || '/';
+      // Strip /ui prefix if present.
+      // The openclaw Control UI loads at /ui/ but its JS constructs WebSocket URLs
+      // relative to the page origin (e.g. wss://host/?token=xxx with no /ui prefix),
+      // so we must proxy BOTH /ui/* and /* (except /ws/*) to the gateway.
+      req.url = url.startsWith('/ui') ? (url.replace(/^\/ui/, '') || '/') : url;
 
-      // Set the host header to the internal gateway so openclaw accepts the connection
+      // Correct the host header so openclaw accepts the connection
       req.headers.host = `${GATEWAY_HOST}:${GATEWAY_PORT}`;
+
+      log.info(`WS proxying: ${url} → ${GATEWAY_WS_URL}${req.url}`);
 
       this._httpProxy.ws(req, socket, head, { target: GATEWAY_WS_URL }, (err) => {
         if (err) {
@@ -147,11 +148,6 @@ class GatewayManager extends EventEmitter {
           socket.destroy();
         }
       });
-    });
-
-    // Log proxy-level WS errors so they're visible in /admin logs
-    this._httpProxy.on('proxyReqWs', (proxyReq, req) => {
-      log.info(`WS proxying: ${req.url} → ${GATEWAY_WS_URL}`);
     });
   }
 
