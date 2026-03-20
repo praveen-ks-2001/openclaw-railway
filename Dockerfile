@@ -2,10 +2,12 @@
 FROM node:22-bookworm-slim AS builder
 
 # node-pty needs python3, make, g++ to compile its native binding
+# git is needed because openclaw has dependencies that npm fetches from git URLs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
