@@ -19,7 +19,7 @@ import { execFileSync } from 'child_process';
 import { config } from './config/index.js';
 import { gatewayManager } from './services/gatewayManager.js';
 import { pairingService } from './services/pairingService.js';
-import { attachTerminalWebSocket } from './services/terminalService.js';
+import { attachTerminalWebSocket, terminalWss } from './services/terminalService.js';
 import { setupRoutes } from './routes/setup.js';
 import { apiRoutes } from './routes/api.js';
 import { proxyMiddleware } from './middleware/proxy.js';
@@ -160,8 +160,26 @@ ${req.query.err ? '<p class="err">Incorrect password</p>' : ''}
   app.use('/', proxyMiddleware);
 
   // ── WebSocket services ─────────────────────────────────────────
+  // Initialize terminal WSS (registers connection handler, but NOT
+  // an upgrade listener — we use noServer mode).
   attachTerminalWebSocket(httpServer);
-  gatewayManager.attachWebSocketProxy(httpServer);
+
+  // Single upgrade handler — routes /ws/terminal to terminal WSS,
+  // everything else to gateway WS proxy. This avoids the ws library's
+  // abortHandshake(400) which would destroy non-terminal sockets.
+  httpServer.on('upgrade', (req, socket, head) => {
+    const url = req.url || '';
+
+    if (url.startsWith('/ws/terminal')) {
+      terminalWss.handleUpgrade(req, socket, head, (ws) => {
+        terminalWss.emit('connection', ws, req);
+      });
+      return;
+    }
+
+    // Everything else → gateway WS proxy
+    gatewayManager.handleWsUpgrade(req, socket, head);
+  });
 
   // ── Start listening ────────────────────────────────────────────
   const PORT = config.PORT;
