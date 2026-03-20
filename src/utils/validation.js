@@ -9,30 +9,22 @@ export function validateSetupForm(body) {
   const errors = [];
   const data = {};
 
-  // ── Model provider — at least one API key required ─────────────
-  const hasAnyKey =
-    body.anthropicApiKey ||
-    body.openaiApiKey    ||
-    body.openrouterApiKey ||
-    body.groqApiKey      ||
-    body.googleApiKey;
+  // ── Provider + API key ────────────────────────────────────────
+  data.provider = (body.provider || '').trim();
+  data.apiKey = (body.apiKey || '').trim();
 
-  if (!hasAnyKey) {
-    errors.push('At least one model provider API key is required.');
+  if (!data.provider) {
+    errors.push('Please select a model provider.');
   }
-
-  // Copy all provider API keys (strip whitespace)
-  for (const key of ['anthropicApiKey','openaiApiKey','openrouterApiKey','groqApiKey','googleApiKey']) {
-    data[key] = (body[key] || '').trim();
+  if (!data.apiKey) {
+    errors.push('API key is required.');
   }
 
   // ── Model selection ─────────────────────────────────────────────
-  data.model = (body.model || 'anthropic/claude-opus-4-6').trim();
-  data.fallbackModel = (body.fallbackModel || '').trim();
-
-  // ── Gateway token ───────────────────────────────────────────────
-  // If not provided we generate a random one
-  data.gatewayToken = (body.gatewayToken || '').trim() || generateToken(32);
+  data.model = (body.model || '').trim();
+  if (!data.model) {
+    errors.push('Please specify a model name.');
+  }
 
   // ── Channels ────────────────────────────────────────────────────
 
@@ -92,13 +84,4 @@ export function validateSetupForm(body) {
 function oneOf(val, allowed, fallback) {
   if (allowed.includes(val)) return val;
   return fallback;
-}
-
-function generateToken(bytes) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-  for (let i = 0; i < bytes; i++) {
-    result += chars[Math.floor(Math.random() * chars.length)];
-  }
-  return result;
 }

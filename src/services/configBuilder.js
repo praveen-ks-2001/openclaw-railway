@@ -58,18 +58,27 @@ export function buildOpenclaWConfig(formData) {
 }
 
 /**
+ * Provider → env var mapping.
+ * The setup form sends a single provider + apiKey pair.
+ */
+const PROVIDER_ENV_MAP = {
+  anthropic:   'ANTHROPIC_API_KEY',
+  openai:      'OPENAI_API_KEY',
+  google:      'GOOGLE_API_KEY',
+  openrouter:  'OPENROUTER_API_KEY',
+  groq:        'GROQ_API_KEY',
+};
+
+/**
  * Returns the env vars that should go in ~/.openclaw/.env
  * Separate from the JSON config so secrets aren't in openclaw.json.
  */
 export function buildEnvVars(formData) {
   const env = {};
-
-  if (formData.anthropicApiKey) env.ANTHROPIC_API_KEY = formData.anthropicApiKey;
-  if (formData.openaiApiKey) env.OPENAI_API_KEY = formData.openaiApiKey;
-  if (formData.openrouterApiKey) env.OPENROUTER_API_KEY = formData.openrouterApiKey;
-  if (formData.groqApiKey) env.GROQ_API_KEY = formData.groqApiKey;
-  if (formData.googleApiKey) env.GOOGLE_API_KEY = formData.googleApiKey;
-
+  const envKey = PROVIDER_ENV_MAP[formData.provider];
+  if (envKey && formData.apiKey) {
+    env[envKey] = formData.apiKey;
+  }
   return env;
 }
 
@@ -105,12 +114,11 @@ function buildGatewaySection(formData) {
     reload: { mode: 'hybrid' },
   };
 
-  // Gateway token — use env var if set, fall back to form value, otherwise no auth
-  const token = OPENCLAW_GATEWAY_TOKEN || formData.gatewayToken || null;
-  if (token) {
+  // Gateway token — always from env var (set in Railway Variables)
+  if (OPENCLAW_GATEWAY_TOKEN) {
     section.auth = {
       mode: 'token',
-      token,
+      token: OPENCLAW_GATEWAY_TOKEN,
     };
   }
 
@@ -118,10 +126,10 @@ function buildGatewaySection(formData) {
   // and restores local client detection for WebSocket connections
   section.trustedProxies = ['127.0.0.1', '::1'];
 
-  // Allow the wrapper's origin to access the Control UI
+  // Allow the wrapper's origin to access the Control UI.
+  // Device auth is enabled (default) — users pair via /admin panel.
   section.controlUi = {
     allowedOrigins: ['*'],
-    dangerouslyDisableDeviceAuth: true,
   };
 
   return section;
