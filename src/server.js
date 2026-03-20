@@ -24,7 +24,7 @@ import { setupRoutes } from './routes/setup.js';
 import { apiRoutes } from './routes/api.js';
 import { proxyMiddleware } from './middleware/proxy.js';
 import { requestLogger } from './middleware/logger.js';
-import { requireAdminAuth } from './middleware/auth.js';
+import { requireAdminAuth, setAuthCookie, clearAuthCookie } from './middleware/auth.js';
 import { ensureDataDir } from './utils/fs.js';
 import { log } from './utils/log.js';
 
@@ -99,6 +99,51 @@ async function main() {
       return res.redirect('/ui/');
     }
     res.redirect('/setup');
+  });
+
+  // Login page — serves form, handles POST
+  app.get('/login', (req, res) => {
+    if (!config.WRAPPER_ADMIN_PASSWORD) return res.redirect('/admin');
+    const returnTo = req.query.returnTo || '/admin';
+    res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>OpenClaw Login</title>
+<style>*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0f14;color:#c9d1d9;font-family:'IBM Plex Mono',monospace;
+display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{background:#14181f;border:1px solid #252d3d;border-radius:12px;padding:40px;width:360px}
+h1{font-size:18px;color:#e85d26;margin-bottom:24px;text-align:center}
+label{font-size:12px;color:#6b7688;display:block;margin-bottom:6px}
+input{width:100%;background:#0d0f14;border:1px solid #252d3d;border-radius:7px;
+color:#c9d1d9;font-family:inherit;font-size:13px;padding:9px 12px;outline:none;margin-bottom:16px}
+input:focus{border-color:#e85d26}
+button{width:100%;background:#e85d26;border:none;border-radius:8px;color:white;
+font-family:inherit;font-size:14px;font-weight:600;padding:12px;cursor:pointer}
+button:hover{background:#f0883e}
+.err{color:#f85149;font-size:12px;margin-bottom:12px;text-align:center}</style>
+</head><body><div class="card">
+<h1>🦞 OpenClaw Admin</h1>
+${req.query.err ? '<p class="err">Incorrect password</p>' : ''}
+<form method="POST" action="/login">
+<input type="hidden" name="returnTo" value="${returnTo}">
+<label>Admin Password</label>
+<input type="password" name="password" autofocus placeholder="Enter password">
+<button type="submit">Sign In</button>
+</form></div></body></html>`);
+  });
+
+  app.post('/login', express.urlencoded({ extended: false }), (req, res) => {
+    const { password, returnTo = '/admin' } = req.body;
+    if (!config.WRAPPER_ADMIN_PASSWORD || password === config.WRAPPER_ADMIN_PASSWORD) {
+      setAuthCookie(res, password);
+      return res.redirect(returnTo);
+    }
+    const r = encodeURIComponent(returnTo);
+    res.redirect(`/login?returnTo=${r}&err=1`);
+  });
+
+  app.get('/logout', (req, res) => {
+    clearAuthCookie(res);
+    res.redirect('/login');
   });
 
   // Admin dashboard — redirect to /setup if not yet configured
