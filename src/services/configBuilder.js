@@ -95,6 +95,8 @@ function buildAgentsSection(formData) {
 
 function buildGatewaySection(formData) {
   const section = {
+    // Required: tells openclaw this is a self-hosted local deployment
+    mode: 'local',
     // Always loopback — our Express wrapper is the public face
     bind: 'loopback',
     port: 18789,
