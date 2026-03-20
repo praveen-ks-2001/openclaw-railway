@@ -37,34 +37,11 @@
     padding: 40px 20px 80px;
   }
 
-  /* ── Header ─────────────────────────────────────── */
-  .page-header {
-    text-align: center;
-    margin-bottom: 40px;
-  }
+  .page-header { text-align: center; margin-bottom: 40px; }
+  .lobster { font-size: 48px; line-height: 1; margin-bottom: 12px; }
+  h1 { font-family: var(--font-mono); font-size: 22px; font-weight: 600; margin-bottom: 8px; }
+  .subtitle { color: var(--text-dim); font-size: 14px; line-height: 1.5; max-width: 420px; }
 
-  .lobster {
-    font-size: 48px;
-    line-height: 1;
-    margin-bottom: 12px;
-  }
-
-  h1 {
-    font-family: var(--font-mono);
-    font-size: 22px;
-    font-weight: 600;
-    color: var(--text);
-    margin-bottom: 8px;
-  }
-
-  .subtitle {
-    color: var(--text-dim);
-    font-size: 14px;
-    line-height: 1.5;
-    max-width: 420px;
-  }
-
-  /* ── Form card ───────────────────────────────────── */
   .card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -89,20 +66,9 @@
     align-items: center;
     gap: 8px;
   }
+  .card-title .required-note { margin-left: auto; font-size: 10px; color: var(--accent); letter-spacing: 0; text-transform: none; }
 
-  .card-title .required-note {
-    margin-left: auto;
-    font-size: 10px;
-    color: var(--accent);
-    letter-spacing: 0;
-    text-transform: none;
-  }
-
-  /* ── Form fields ─────────────────────────────────── */
-  .field {
-    margin-bottom: 18px;
-  }
-
+  .field { margin-bottom: 18px; }
   .field:last-child { margin-bottom: 0; }
 
   label {
@@ -112,15 +78,10 @@
     color: var(--text-dim);
     margin-bottom: 6px;
   }
-
   label .req { color: var(--accent); margin-left: 2px; }
   label .hint { font-weight: 400; color: var(--text-dim); opacity: 0.7; margin-left: 6px; }
 
-  input[type="text"],
-  input[type="password"],
-  input[type="url"],
-  select,
-  textarea {
+  input[type="text"], input[type="password"], input[type="url"], select, textarea {
     width: 100%;
     background: var(--bg);
     border: 1px solid var(--border);
@@ -133,16 +94,8 @@
     transition: border-color 0.15s;
     appearance: none;
   }
-
-  input:focus, select:focus, textarea:focus {
-    border-color: var(--accent);
-  }
-
-  input::placeholder, textarea::placeholder {
-    color: var(--text-dim);
-    opacity: 0.5;
-  }
-
+  input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+  input::placeholder, textarea::placeholder { color: var(--text-dim); opacity: 0.5; }
   textarea { resize: vertical; min-height: 72px; line-height: 1.5; }
 
   select {
@@ -153,126 +106,45 @@
     padding-right: 32px;
   }
 
-  .field-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 14px;
-  }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
-  /* ── Collapsible channel sections ────────────────── */
   .channel-toggle {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    cursor: pointer;
-    padding: 10px 0;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 0;
-    user-select: none;
+    display: flex; align-items: center; gap: 10px; cursor: pointer;
+    padding: 10px 0; border-bottom: 1px solid var(--border); user-select: none;
   }
-
-  .channel-toggle input[type="checkbox"] {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--accent);
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-
-  .channel-toggle-label {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 500;
-    color: var(--text);
-  }
-
+  .channel-toggle input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+  .channel-toggle-label { font-family: var(--font-mono); font-size: 13px; font-weight: 500; }
   .channel-icon { font-size: 16px; }
   .channel-body { display: none; padding-top: 16px; }
   .channel-body.open { display: block; }
 
-  /* ── DM policy helper ────────────────────────────── */
-  .policy-hint {
-    font-size: 11px;
-    color: var(--text-dim);
-    margin-top: 5px;
-    font-family: var(--font-mono);
-  }
+  .policy-hint { font-size: 11px; color: var(--text-dim); margin-top: 5px; font-family: var(--font-mono); }
 
-  /* ── Launch button ───────────────────────────────── */
-  .launch-area {
-    width: 100%;
-    max-width: 620px;
-    text-align: center;
-  }
+  .launch-area { width: 100%; max-width: 620px; text-align: center; }
 
   .btn-launch {
-    width: 100%;
-    padding: 14px;
-    background: var(--accent);
-    border: none;
-    border-radius: 8px;
-    color: white;
-    font-family: var(--font-mono);
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background 0.15s, transform 0.1s;
-    letter-spacing: 0.5px;
+    width: 100%; padding: 14px; background: var(--accent); border: none; border-radius: 8px;
+    color: white; font-family: var(--font-mono); font-size: 15px; font-weight: 600;
+    cursor: pointer; transition: background 0.15s, transform 0.1s; letter-spacing: 0.5px;
   }
-
-  .btn-launch:hover   { background: var(--accent2); }
-  .btn-launch:active  { transform: scale(0.99); }
+  .btn-launch:hover { background: var(--accent2); }
+  .btn-launch:active { transform: scale(0.99); }
   .btn-launch:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
-  /* ── Progress / status ───────────────────────────── */
-  #launch-status {
-    margin-top: 16px;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    color: var(--text-dim);
-    display: none;
-    text-align: center;
-  }
-
-  #launch-status.ok  { color: var(--green); display: block; }
-  #launch-status.err { color: var(--red);   display: block; }
+  #launch-status { margin-top: 16px; font-family: var(--font-mono); font-size: 13px; color: var(--text-dim); display: none; text-align: center; }
+  #launch-status.ok { color: var(--green); display: block; }
+  #launch-status.err { color: var(--red); display: block; }
   #launch-status.running { display: block; }
 
-  .spinner {
-    display: inline-block;
-    width: 14px;
-    height: 14px;
-    border: 2px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    vertical-align: middle;
-    margin-right: 8px;
-  }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; vertical-align: middle; margin-right: 8px; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ── Error list ──────────────────────────────────── */
-  #error-list {
-    background: rgba(248,81,73,0.08);
-    border: 1px solid var(--red);
-    border-radius: 8px;
-    padding: 14px 18px;
-    margin-bottom: 16px;
-    display: none;
-    width: 100%;
-    max-width: 620px;
-  }
+  #error-list { background: rgba(248,81,73,0.08); border: 1px solid var(--red); border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; display: none; width: 100%; max-width: 620px; }
   #error-list.visible { display: block; }
   #error-list ul { list-style: none; }
-  #error-list li {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--red);
-    padding: 3px 0;
-  }
-  #error-list li::before { content: '✗  '; }
+  #error-list li { font-family: var(--font-mono); font-size: 12px; color: var(--red); padding: 3px 0; }
+  #error-list li::before { content: '\2717  '; }
 
-  /* ── Scrollbar ───────────────────────────────────── */
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -281,10 +153,10 @@
 <body>
 
 <div class="page-header">
-  <div class="lobster">🦞</div>
+  <div class="lobster">&#x1F99E;</div>
   <h1>OpenClaw Setup</h1>
-  <p class="subtitle">Configure your personal AI assistant. Fill in at least one model provider API key and one messaging channel to get started.</p>
-  <p style="margin-top:12px"><a href="/admin" style="color:var(--accent);font-family:var(--font-mono);font-size:13px;text-decoration:none;">→ Go to Admin Dashboard</a></p>
+  <p class="subtitle">Configure your personal AI assistant. Select a model provider and optionally add messaging channels.</p>
+  <p style="margin-top:12px"><a href="/admin" style="color:var(--accent);font-family:var(--font-mono);font-size:13px;text-decoration:none;">&rarr; Go to Admin Dashboard</a></p>
 </div>
 
 <div id="error-list"><ul id="error-items"></ul></div>
@@ -292,64 +164,41 @@
 <!-- Card 1: Model Provider -->
 <div class="card">
   <div class="card-title">
-    🤖 Model Provider
-    <span class="required-note">* at least one required</span>
+    &#x1F916; Model Provider
+    <span class="required-note">* required</span>
   </div>
 
   <div class="field">
-    <label for="model">Primary Model</label>
-    <select id="model" name="model">
-      <optgroup label="Anthropic">
-        <option value="anthropic/claude-opus-4-6" selected>claude-opus-4-6 (best)</option>
-        <option value="anthropic/claude-sonnet-4-6">claude-sonnet-4-6 (fast)</option>
-        <option value="anthropic/claude-haiku-4-5">claude-haiku-4-5 (fastest)</option>
-      </optgroup>
-      <optgroup label="OpenAI">
-        <option value="openai/gpt-5.2">gpt-5.2</option>
-        <option value="openai/gpt-4.1">gpt-4.1</option>
-        <option value="openai/gpt-4.1-mini">gpt-4.1-mini</option>
-      </optgroup>
-      <optgroup label="Google">
-        <option value="google/gemini-2.5-pro">gemini-2.5-pro</option>
-        <option value="google/gemini-2.0-flash">gemini-2.0-flash</option>
-      </optgroup>
-      <optgroup label="OpenRouter">
-        <option value="openrouter/auto">openrouter/auto</option>
-      </optgroup>
+    <label for="provider">Provider <span class="req">*</span></label>
+    <select id="provider" name="provider" onchange="onProviderChange()">
+      <option value="">-- Select provider --</option>
+      <option value="anthropic">Anthropic</option>
+      <option value="openai">OpenAI</option>
+      <option value="google">Google</option>
+      <option value="openrouter">OpenRouter</option>
+      <option value="groq">Groq</option>
     </select>
   </div>
 
-  <div class="field-row">
-    <div class="field">
-      <label for="anthropicApiKey">Anthropic API Key <span class="hint">sk-ant-...</span></label>
-      <input type="password" id="anthropicApiKey" name="anthropicApiKey" placeholder="sk-ant-api03-..." autocomplete="off">
-    </div>
-    <div class="field">
-      <label for="openaiApiKey">OpenAI API Key <span class="hint">sk-...</span></label>
-      <input type="password" id="openaiApiKey" name="openaiApiKey" placeholder="sk-..." autocomplete="off">
-    </div>
+  <div class="field">
+    <label for="model">Model <span class="req">*</span> <span class="hint" id="model-hint"></span></label>
+    <input type="text" id="model" name="model" placeholder="e.g. anthropic/claude-sonnet-4-6">
   </div>
 
-  <div class="field-row">
-    <div class="field">
-      <label for="openrouterApiKey">OpenRouter API Key</label>
-      <input type="password" id="openrouterApiKey" name="openrouterApiKey" placeholder="sk-or-..." autocomplete="off">
-    </div>
-    <div class="field">
-      <label for="googleApiKey">Google API Key</label>
-      <input type="password" id="googleApiKey" name="googleApiKey" placeholder="AIza..." autocomplete="off">
-    </div>
+  <div class="field">
+    <label for="apiKey"><span id="apikey-label">API Key</span> <span class="req">*</span></label>
+    <input type="password" id="apiKey" name="apiKey" placeholder="Paste your API key" autocomplete="off">
   </div>
 </div>
 
 <!-- Card 2: Channels -->
 <div class="card">
-  <div class="card-title">💬 Channels</div>
+  <div class="card-title">&#x1F4AC; Channels <span class="required-note">optional</span></div>
 
   <!-- Telegram -->
   <div class="channel-toggle" onclick="toggleChannel('telegram', event)">
     <input type="checkbox" id="ch-telegram" onchange="toggleChannel('telegram', event)">
-    <span class="channel-icon">✈️</span>
+    <span class="channel-icon">&#x2708;&#xFE0F;</span>
     <span class="channel-toggle-label">Telegram</span>
   </div>
   <div class="channel-body" id="body-telegram">
@@ -378,7 +227,7 @@
   <!-- Discord -->
   <div class="channel-toggle" style="margin-top:4px" onclick="toggleChannel('discord', event)">
     <input type="checkbox" id="ch-discord" onchange="toggleChannel('discord', event)">
-    <span class="channel-icon">🎮</span>
+    <span class="channel-icon">&#x1F3AE;</span>
     <span class="channel-toggle-label">Discord</span>
   </div>
   <div class="channel-body" id="body-discord">
@@ -400,7 +249,7 @@
   <!-- Slack -->
   <div class="channel-toggle" style="margin-top:4px" onclick="toggleChannel('slack', event)">
     <input type="checkbox" id="ch-slack" onchange="toggleChannel('slack', event)">
-    <span class="channel-icon">💼</span>
+    <span class="channel-icon">&#x1F4BC;</span>
     <span class="channel-toggle-label">Slack</span>
   </div>
   <div class="channel-body" id="body-slack">
@@ -419,7 +268,7 @@
   <!-- Mattermost -->
   <div class="channel-toggle" style="margin-top:4px" onclick="toggleChannel('mattermost', event)">
     <input type="checkbox" id="ch-mattermost" onchange="toggleChannel('mattermost', event)">
-    <span class="channel-icon">🔷</span>
+    <span class="channel-icon">&#x1F537;</span>
     <span class="channel-toggle-label">Mattermost</span>
   </div>
   <div class="channel-body" id="body-mattermost">
@@ -436,17 +285,13 @@
   </div>
 </div>
 
-<!-- Card 3: Gateway & Session -->
+<!-- Card 3: Session Settings -->
 <div class="card">
-  <div class="card-title">⚙️ Gateway & Session</div>
+  <div class="card-title">&#x2699;&#xFE0F; Session Settings <span class="required-note">optional</span></div>
 
   <div class="field-row">
     <div class="field">
-      <label for="gatewayToken">Gateway Token <span class="hint">auto-generated if blank</span></label>
-      <input type="password" id="gatewayToken" name="gatewayToken" placeholder="leave blank to auto-generate" autocomplete="off">
-    </div>
-    <div class="field">
-      <label for="sessionScope">Session Scope</label>
+      <label for="sessionScope">Session Scope <span class="hint">how conversations are grouped</span></label>
       <select id="sessionScope" name="sessionScope">
         <option value="per-channel-peer" selected>per-channel-peer (recommended)</option>
         <option value="per-peer">per-peer</option>
@@ -454,41 +299,59 @@
         <option value="per-account-channel-peer">per-account-channel-peer</option>
       </select>
     </div>
-  </div>
-
-  <div class="field-row">
     <div class="field">
       <label for="heartbeatEvery">Heartbeat <span class="hint">e.g. 30m, 2h</span></label>
       <input type="text" id="heartbeatEvery" name="heartbeatEvery" placeholder="30m">
     </div>
-    <div class="field">
-      <label for="sessionResetMode">Session Reset</label>
-      <select id="sessionResetMode" name="sessionResetMode">
-        <option value="">off</option>
-        <option value="daily">daily</option>
-        <option value="idle">on idle</option>
-      </select>
-    </div>
+  </div>
+
+  <div class="field">
+    <label for="sessionResetMode">Session Reset</label>
+    <select id="sessionResetMode" name="sessionResetMode">
+      <option value="">off</option>
+      <option value="daily">daily</option>
+      <option value="idle">on idle</option>
+    </select>
   </div>
 </div>
 
 <!-- Launch -->
 <div class="launch-area">
   <button class="btn-launch" id="btn-launch" onclick="launch()">
-    🦞 Launch OpenClaw
+    &#x1F99E; Launch OpenClaw
   </button>
   <div id="launch-status"></div>
 </div>
 
 <script>
+// ── Provider defaults ─────────────────────────────────────────────
+const providerDefaults = {
+  anthropic:  { model: 'anthropic/claude-sonnet-4-6',    hint: 'sk-ant-...', label: 'Anthropic API Key' },
+  openai:     { model: 'openai/gpt-4.1-mini',            hint: 'sk-...',     label: 'OpenAI API Key' },
+  google:     { model: 'google/gemini-2.5-flash',        hint: 'AIza...',    label: 'Google API Key' },
+  openrouter: { model: 'openrouter/auto',                hint: 'sk-or-...',  label: 'OpenRouter API Key' },
+  groq:       { model: 'groq/llama-3.3-70b-versatile',   hint: 'gsk_...',    label: 'Groq API Key' },
+};
+
+function onProviderChange() {
+  const sel = document.getElementById('provider');
+  const def = providerDefaults[sel.value];
+  if (def) {
+    document.getElementById('model').placeholder = def.model;
+    if (!document.getElementById('model').value) {
+      document.getElementById('model').value = def.model;
+    }
+    document.getElementById('model-hint').textContent = def.model;
+    document.getElementById('apikey-label').textContent = def.label;
+    document.getElementById('apiKey').placeholder = def.hint;
+  }
+}
+
 // ── Channel toggles ───────────────────────────────────────────────
 function toggleChannel(name, event) {
-  // Don't double-fire when clicking the checkbox directly
   if (event.type === 'click' && event.target.tagName === 'INPUT') return;
-
   const cb   = document.getElementById('ch-' + name);
   const body = document.getElementById('body-' + name);
-
   if (event.target === cb) {
     body.classList.toggle('open', cb.checked);
   } else {
@@ -501,7 +364,7 @@ function toggleChannel(name, event) {
 const policyHints = {
   pairing:   'Unknown senders must request pairing first',
   allowlist: 'Only senders in the allow list can message',
-  open:      'All inbound DMs are accepted — use with caution',
+  open:      'All inbound DMs are accepted \u2014 use with caution',
   disabled:  'All inbound DMs are ignored',
 };
 
@@ -509,9 +372,7 @@ document.querySelectorAll('select[id$="DmPolicy"]').forEach(sel => {
   const chanName = sel.id.replace('DmPolicy','').toLowerCase();
   const hint = document.getElementById('policy-hint-' + chanName);
   if (!hint) return;
-  sel.addEventListener('change', () => {
-    hint.textContent = policyHints[sel.value] || '';
-  });
+  sel.addEventListener('change', () => { hint.textContent = policyHints[sel.value] || ''; });
 });
 
 // ── Form collection ───────────────────────────────────────────────
@@ -532,7 +393,7 @@ async function launch() {
 
   btn.disabled = true;
   status.className = 'running';
-  status.innerHTML = '<span class="spinner"></span> Saving config and launching gateway…';
+  status.innerHTML = '<span class="spinner"></span> Saving config and launching gateway\u2026';
   errBox.classList.remove('visible');
 
   const body = collectForm();
@@ -548,9 +409,8 @@ async function launch() {
     const data = await res.json();
 
     if (!res.ok || !data.ok) {
-      // Validation errors
       if (data.errors && data.errors.length) {
-        errItems.innerHTML = data.errors.map(e => `<li>${escHtml(e)}</li>`).join('');
+        errItems.innerHTML = data.errors.map(e => '<li>' + escHtml(e) + '</li>').join('');
         errBox.classList.add('visible');
         status.className = '';
         status.style.display = 'none';
@@ -560,43 +420,35 @@ async function launch() {
       throw new Error(data.error || 'Unknown error');
     }
 
-    // Success — poll for gateway state
     status.className = 'running';
-    status.innerHTML = '<span class="spinner"></span> Gateway starting… watching for ready state…';
-
+    status.innerHTML = '<span class="spinner"></span> Gateway starting\u2026 watching for ready state\u2026';
     await pollUntilRunning();
 
     status.className = 'ok';
-    status.textContent = '✓ Gateway is running! Redirecting to admin…';
-
+    status.textContent = '\u2713 Gateway is running! Redirecting to admin\u2026';
     setTimeout(() => { window.location.href = '/admin'; }, 1500);
-
   } catch (err) {
     status.className = 'err';
-    status.textContent = '✗ ' + err.message;
+    status.textContent = '\u2717 ' + err.message;
     btn.disabled = false;
   }
 }
 
-async function pollUntilRunning(attempts = 0) {
+async function pollUntilRunning(attempts) {
+  attempts = attempts || 0;
   if (attempts > 60) throw new Error('Gateway did not start within 60 seconds');
-
-  const res  = await fetch('/api/status').catch(() => null);
+  const res = await fetch('/api/status').catch(function() { return null; });
   if (res && res.ok) {
-    const data = await res.json().catch(() => ({}));
+    const data = await res.json().catch(function() { return {}; });
     if (data.state === 'running') return;
     if (data.state === 'crashed') throw new Error('Gateway crashed during startup. Check logs at /admin.');
   }
-
-  await new Promise(r => setTimeout(r, 1000));
+  await new Promise(function(r) { setTimeout(r, 1000); });
   return pollUntilRunning(attempts + 1);
 }
 
 function escHtml(str) {
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 </script>
 </body>
