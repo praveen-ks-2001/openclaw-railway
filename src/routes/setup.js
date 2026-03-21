@@ -9,11 +9,15 @@ import { Router } from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
-import { config } from '../config/index.js';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { config, DATA_DIR, OPENCLAW_HOME, OPENCLAW_GATEWAY_TOKEN } from '../config/index.js';
 import { gatewayManager } from '../services/gatewayManager.js';
 import { buildOpenclaWConfig, buildEnvVars } from '../services/configBuilder.js';
 import { validateSetupForm } from '../utils/validation.js';
 import { log } from '../utils/log.js';
+
+const execFileAsync = promisify(execFile);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -73,6 +77,28 @@ setupRoutes.post('/save', async (req, res) => {
   } catch (err) {
     log.error('Setup failed:', err);
     res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── POST /setup/pairing/approve — approve a channel pairing code ────
+
+setupRoutes.post('/pairing/approve', async (req, res) => {
+  const { channel, code } = req.body || {};
+  if (!channel || !code) {
+    return res.status(400).json({ ok: false, error: 'Missing channel or code' });
+  }
+
+  try {
+    const env = { ...process.env, HOME: DATA_DIR, OPENCLAW_STATE_DIR: OPENCLAW_HOME };
+    const args = ['pairing', 'approve', String(channel), String(code)];
+
+    const { stdout } = await execFileAsync('openclaw', args, { env, timeout: 15_000 });
+    log.info(`Pairing approve result: ${stdout}`);
+    res.json({ ok: true, output: stdout });
+  } catch (err) {
+    const output = err.stdout || err.stderr || err.message;
+    log.error(`Pairing approve failed: ${output}`);
+    res.status(500).json({ ok: false, error: output });
   }
 });
 
