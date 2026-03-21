@@ -2,31 +2,24 @@
 FROM node:22-bookworm-slim AS builder
 
 # node-pty needs python3, make, g++ to compile its native binding.
-# git is needed because openclaw's transitive deps (baileys → libsignal-node)
-# reference a GitHub SSH URL.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
-    git \
-    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY package.json ./
 
-# Write .npmrc to force HTTPS for all GitHub git deps.
-# npm reads this before resolving any git URLs, so ssh://git@github.com/* → https://github.com/*
-# This prevents "ssh not found" errors in CI/Docker environments without SSH keys.
-RUN printf '[url "https://github.com/"]\n\tinsteadOf = ssh://git@github.com/\n\tinsteadOf = git@github.com:\n' > /root/.gitconfig \
-    && git config --global --list
-
 RUN npm install --omit=dev
 
 
 # ─── Stage 2: Runtime ────────────────────────────────────────────────────────
 FROM node:22-bookworm-slim
+
+# OpenClaw version — set via Railway build args to pin a specific version
+ARG OPENCLAW_VERSION=latest
 
 # Runtime deps:
 # - bash: required by node-pty for the shell
@@ -37,6 +30,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     procps \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Install openclaw globally so the binary is always in PATH
+RUN npm install -g openclaw@${OPENCLAW_VERSION}
 
 WORKDIR /app
 
@@ -53,10 +49,7 @@ COPY package.json ./
 # Create it so the image works even without a volume attached (dev/test).
 RUN mkdir -p /data/.openclaw/nodes /data/.openclaw/workspace
 
-# ── Critical: add node_modules/.bin to PATH ──────────────────────────────────
-# When running `node src/server.js` directly (not via npm run), PATH does NOT
-# include node_modules/.bin. We must add it explicitly so that `openclaw`
-# binary (installed as npm package) is found by spawn() and execFile().
+# ── Ensure node_modules/.bin is in PATH for other local binaries ─────────────
 ENV PATH="/app/node_modules/.bin:${PATH}"
 
 # Railway sets PORT automatically; default to 3000

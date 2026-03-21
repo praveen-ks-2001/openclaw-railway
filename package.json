@@ -13,8 +13,7 @@
     "http-proxy": "^1.18.1",
     "ws": "^8.16.0",
     "chokidar": "^3.6.0",
-    "node-pty": "^1.0.0",
-    "openclaw": "latest"
+    "node-pty": "^1.0.0"
   },
   "engines": {
     "node": ">=22"

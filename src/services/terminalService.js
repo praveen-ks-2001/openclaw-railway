@@ -4,8 +4,8 @@
  * Manages PTY (pseudo-terminal) sessions for the web terminal panel.
  *
  * One PTY per WebSocket connection. When the WS closes, the PTY is killed.
- * The shell is pre-loaded with the correct HOME and OPENCLAW env vars so
- * that `openclaw doctor`, `openclaw models status`, etc. all work correctly.
+ * Spawns `openclaw tui` (interactive terminal) — deferred until the first
+ * 'resize' message so we know the correct terminal dimensions.
  *
  * Protocol (binary-safe, text frames):
  *   Client → Server:
@@ -25,7 +25,7 @@ import { log } from '../utils/log.js';
 // Maximum simultaneous PTY sessions (guard against resource exhaustion)
 const MAX_SESSIONS = 5;
 
-// Active sessions: Map<wsId, { ptyProc, ws }>
+// Active sessions: Map<sessionId, { ptyProc, ws }>
 const sessions = new Map();
 let sessionCounter = 0;
 
@@ -55,58 +55,65 @@ export function attachTerminalWebSocket(httpServer) {
     const sessionId = ++sessionCounter;
     log.info(`Terminal WS connected (session #${sessionId})`);
 
-    // ── Spawn the PTY ─────────────────────────────────────────────
-    const shell = process.env.SHELL || '/bin/bash';
+    // ── Deferred PTY spawn ───────────────────────────────────────
+    // Wait for first 'resize' message to get correct terminal dimensions.
 
     const env = {
       ...process.env,
-      HOME:               DATA_DIR,
-      OPENCLAW_STATE_DIR: OPENCLAW_STATE_DIR,
-      TERM:               'xterm-256color',
-      COLORTERM:          'truecolor',
-      // Make sure openclaw CLI can find the config
-      OPENCLAW_CONFIG:    `${OPENCLAW_HOME}/openclaw.json`,
+      HOME:                   DATA_DIR,
+      OPENCLAW_STATE_DIR:     OPENCLAW_STATE_DIR,
+      OPENCLAW_WORKSPACE_DIR: `${OPENCLAW_HOME}/workspace`,
+      TERM:                   'xterm-256color',
+      COLORTERM:              'truecolor',
     };
 
-    let ptyProc;
-    try {
-      ptyProc = pty.spawn(shell, [], {
-        name:  'xterm-256color',
-        cols:  80,
-        rows:  24,
-        cwd:   DATA_DIR,
-        env,
+    let ptyProc = null;
+    let ptyStarted = false;
+
+    function spawnPty(cols, rows) {
+      if (ptyStarted) return;
+      ptyStarted = true;
+
+      try {
+        ptyProc = pty.spawn('openclaw', ['tui'], {
+          name:  'xterm-256color',
+          cols:  cols || 80,
+          rows:  rows || 24,
+          cwd:   `${OPENCLAW_HOME}/workspace`,
+          env,
+        });
+      } catch (err) {
+        log.error('Failed to spawn PTY:', err.message);
+        ws.send(JSON.stringify({
+          type: 'output',
+          data: `\r\n\x1b[31m[Failed to start terminal: ${err.message}]\x1b[0m\r\n`,
+        }));
+        ws.close();
+        return;
+      }
+
+      log.info(`PTY spawned for session #${sessionId} (${cols}x${rows})`);
+      sessions.set(sessionId, { ptyProc, ws });
+
+      // ── PTY → WS ────────────────────────────────────────────
+      ptyProc.onData((data) => {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'output', data }));
+        }
       });
-    } catch (err) {
-      log.error('Failed to spawn PTY:', err.message);
-      ws.send(JSON.stringify({
-        type: 'output',
-        data: `\r\n\x1b[31m[Failed to start terminal: ${err.message}]\x1b[0m\r\n`,
-      }));
-      ws.close();
-      return;
+
+      ptyProc.onExit(({ exitCode }) => {
+        log.info(`Terminal session #${sessionId} exited (code=${exitCode})`);
+        if (ws.readyState === ws.OPEN) {
+          ws.send(JSON.stringify({ type: 'exit', code: exitCode }));
+          ws.close();
+        }
+        sessions.delete(sessionId);
+      });
     }
 
-    // Print a welcome banner with openclaw-specific hints
-    ptyProc.write(`echo -e "\\e[36m🦞 OpenClaw Terminal — type 'openclaw --help' to get started\\e[0m"\r`);
-
-    sessions.set(sessionId, { ptyProc, ws });
-
-    // ── PTY → WS ──────────────────────────────────────────────────
-    ptyProc.onData((data) => {
-      if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({ type: 'output', data }));
-      }
-    });
-
-    ptyProc.onExit(({ exitCode }) => {
-      log.info(`Terminal session #${sessionId} exited (code=${exitCode})`);
-      if (ws.readyState === ws.OPEN) {
-        ws.send(JSON.stringify({ type: 'exit', code: exitCode }));
-        ws.close();
-      }
-      sessions.delete(sessionId);
-    });
+    // Track session even before PTY spawns (for cleanup)
+    sessions.set(sessionId, { ptyProc: null, ws });
 
     // ── WS → PTY ──────────────────────────────────────────────────
     ws.on('message', (raw) => {
@@ -114,13 +121,12 @@ export function attachTerminalWebSocket(httpServer) {
       try {
         msg = JSON.parse(raw.toString());
       } catch {
-        // Ignore malformed frames
         return;
       }
 
       switch (msg.type) {
         case 'input':
-          if (typeof msg.data === 'string') {
+          if (typeof msg.data === 'string' && ptyProc) {
             ptyProc.write(msg.data);
           }
           break;
@@ -132,7 +138,11 @@ export function attachTerminalWebSocket(httpServer) {
             msg.cols > 0 && msg.rows > 0 &&
             msg.cols <= 500 && msg.rows <= 200
           ) {
-            ptyProc.resize(msg.cols, msg.rows);
+            if (!ptyStarted) {
+              spawnPty(msg.cols, msg.rows);
+            } else if (ptyProc) {
+              ptyProc.resize(msg.cols, msg.rows);
+            }
           }
           break;
 
@@ -145,16 +155,14 @@ export function attachTerminalWebSocket(httpServer) {
     ws.on('close', () => {
       log.info(`Terminal WS closed (session #${sessionId})`);
       if (sessions.has(sessionId)) {
-        try {
-          ptyProc.kill();
-        } catch { /* already dead */ }
+        try { if (ptyProc) ptyProc.kill(); } catch { /* already dead */ }
         sessions.delete(sessionId);
       }
     });
 
     ws.on('error', (err) => {
       log.warn(`Terminal WS error (session #${sessionId}):`, err.message);
-      try { ptyProc.kill(); } catch { /* ignore */ }
+      try { if (ptyProc) ptyProc.kill(); } catch { /* ignore */ }
       sessions.delete(sessionId);
     });
   });
