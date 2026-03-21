@@ -16,7 +16,7 @@ Once your Railway deploy is live, open your service URL — you'll be redirected
 
 The `/setup` page is a **one-time configuration wizard** — it's where you select your AI provider, paste your API key, and optionally wire up messaging channels (Telegram, Discord, Slack, etc.). Once setup is complete, `/setup` **cannot be used again** without first wiping the existing configuration from the `/admin` panel. This is by design — `/setup` is an open URL (no password), so it only works when no config exists yet.
 
-![OpenClaw setup wizard](placeholder-setup-screenshot.png)
+![OpenClaw setup wizard](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088297/openclaw_setup_page_rxowv8.png)
 
 ### Step 2: Access the **Admin Dashboard** at `/admin`
 
@@ -28,13 +28,9 @@ The `/admin` page is password-protected — log in with your `WRAPPER_ADMIN_PASS
 - **🔗 Device Pairing** — approve or reject browser and device pairing requests in real time
 - **⚙️ Config Editor** — view and edit `openclaw.json` with hot-reload support
 
-![OpenClaw admin dashboard — status panel](placeholder-admin-status.png)
+![OpenClaw Admin Page Protection](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088295/Openclaw_Admin_Login_u1eqcu.png)
 
-![OpenClaw admin dashboard — live logs](placeholder-admin-logs.png)
-
-![OpenClaw admin dashboard — terminal](placeholder-admin-terminal.png)
-
-![OpenClaw admin dashboard — device pairing](placeholder-admin-pairing.png)
+![OpenClaw admin dashboard](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088294/Openclaw_admin_UI_qzsxep.png)
 
 ```bash
 # Useful terminal commands from the admin terminal
@@ -43,21 +39,31 @@ openclaw models status    # verify API key auth
 openclaw devices list     # list paired devices
 ```
 
+> 💡 **Tip:** Full terminal access to your OpenClaw container is available directly from the **Admin → Terminal** panel — no SSH needed.
+
+![OpenClaw admin terminal — run openclaw CLI commands directly in the browser](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088288/Openclaw_admin_TUI_elvlpt.png)
+
 ### Step 3: Connect to the **OpenClaw UI**
 
 Click the **"Open OpenClaw UI"** button in the top-right corner of the admin dashboard to open the main OpenClaw interface.
 
-If this is your **first time connecting**, you'll need to set up the OpenClaw gateway connection:
+If this is your **first time connecting**, you'll need to set up the **OpenClaw gateway connection**:
 
-1. **Enter your gateway token** — copy it from the Admin dashboard or from your `OPENCLAW_GATEWAY_TOKEN` environment variable, paste it into the gateway connection screen, and click **Connect**
+1. **Open the gateway screen** — clicking "Open OpenClaw UI" will take you to the gateway connection page
 
-![OpenClaw gateway connection setup](placeholder-gateway-connect.png)
+![OpenClaw gateway connection screen](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088291/Openclaw_gateway_dlmpb3.png)
 
-2. **Approve the pairing request** — your browser will send a device pairing request. Switch back to the **Admin Dashboard → Pairing** panel to approve it
+2. **Enter your gateway token** — copy your `OPENCLAW_GATEWAY_TOKEN` from the Admin dashboard or your Railway environment variables, paste it into the gateway token field, and click **Connect**. Your browser will send a device pairing request to the gateway
 
-3. **Go back to the browser** — once approved, the OpenClaw UI will connect and you're ready to start chatting with your self-hosted AI assistant
+![OpenClaw gateway — token entered and pairing request pending](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088290/Openclaw_gateway_token_passed_pairing_pending_fa7abr.png)
 
-![OpenClaw UI connected](placeholder-openclaw-ui.png)
+3. **Approve the pairing request** — switch back to the **Admin Dashboard → Pairing** panel and approve the incoming browser pairing request
+
+![OpenClaw admin — approve device pairing request](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088289/Openclaw_Pairing_UI_spmo3x.png)
+
+4. **Go back to the gateway and click Connect again** — once the pairing is approved, the OpenClaw UI will load and you're ready to start chatting with your self-hosted AI assistant
+
+![OpenClaw UI — fully connected and ready to use](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088288/OpenClaw_UI_after_full_setup_rzkl2x.png)
 
 ## 📖 About Hosting OpenClaw
 
