@@ -2,15 +2,21 @@
 FROM node:22-bookworm-slim AS builder
 
 # node-pty needs python3, make, g++ to compile its native binding.
+# git is needed because transitive deps reference GitHub SSH URLs.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     make \
     g++ \
+    git \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY package.json ./
+
+# Force HTTPS for any GitHub git deps (no SSH keys in Docker)
+RUN printf '[url "https://github.com/"]\n\tinsteadOf = ssh://git@github.com/\n\tinsteadOf = git@github.com:\n' > /root/.gitconfig
 
 RUN npm install --omit=dev
 
@@ -29,10 +35,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     procps \
     curl \
+    git \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install openclaw globally so the binary is always in PATH
-RUN npm install -g openclaw@${OPENCLAW_VERSION}
+# Install openclaw globally — needs git for transitive deps with GitHub URLs
+RUN printf '[url "https://github.com/"]\n\tinsteadOf = ssh://git@github.com/\n\tinsteadOf = git@github.com:\n' > /root/.gitconfig \
+    && npm install -g openclaw@${OPENCLAW_VERSION}
 
 WORKDIR /app
 
