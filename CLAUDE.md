@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## Overview
 
 This is a Railway deployment wrapper for **OpenClaw** (open-source AI coding assistant). It's a single Express service that:
@@ -7,6 +9,11 @@ This is a Railway deployment wrapper for **OpenClaw** (open-source AI coding ass
 - Provides a setup UI at `/setup`, admin dashboard at `/admin`, and login at `/login`
 - Reverse-proxies all other traffic to the openclaw gateway
 - Handles WebSocket proxying via raw TCP socket piping (not http-proxy's broken WS support on Node 22)
+
+## Project Setup
+- **ESM-only** — `"type": "module"` in package.json, all imports use ES module syntax
+- **Node.js >= 22** required (uses `--watch` for dev, native fetch, etc.)
+- **No test suite or linter configured** — there are no test/lint commands
 
 ## Architecture
 
@@ -31,8 +38,11 @@ This is a Railway deployment wrapper for **OpenClaw** (open-source AI coding ass
 - `src/services/configBuilder.js` — Builds openclaw.json from setup form data
 - `src/config/index.js` — All paths and constants
 - `src/utils/validation.js` — Setup form validation
+- `src/utils/fs.js` — Data directory initialization, atomic file writes
+- `src/utils/log.js` — Centralized logging utility
 - `src/middleware/proxy.js` — HTTP proxy middleware
 - `src/middleware/auth.js` — Cookie-based admin auth
+- `src/middleware/logger.js` — HTTP request logging
 - `src/routes/setup.js` — Setup flow routes
 - `src/routes/api.js` — Admin API endpoints
 - `public/admin.html` — Admin dashboard (status, logs, terminal, pairing, config)
@@ -44,6 +54,9 @@ This is a Railway deployment wrapper for **OpenClaw** (open-source AI coding ass
 - `WRAPPER_ADMIN_PASSWORD` — Password for /admin and /setup (optional)
 - `OPENCLAW_DATA_DIR` — Volume mount path (default /data)
 - `OPENCLAW_VERSION` — Docker build ARG (not runtime env). Set in Railway build args to pin a specific openclaw version (e.g., `2026.3.13`). Defaults to `latest`.
+
+### Health Check
+- `GET /api/status` — used by Docker HEALTHCHECK (15s interval, 30s start period)
 
 ### Critical Design Decisions
 
@@ -71,15 +84,22 @@ This is a Railway deployment wrapper for **OpenClaw** (open-source AI coding ass
 ## Development Commands
 
 ```bash
-npm start        # Production start
-npm run dev      # Development with --watch
+npm start        # Production start (node src/server.js)
+npm run dev      # Development with --watch (auto-restart on file changes)
 ```
 
+Note: Local dev requires the `openclaw` binary in PATH and a `/data` directory (or `OPENCLAW_DATA_DIR` set). Docker is the easiest way to get a working environment.
+
 ## Docker Build
+
+Two-stage Dockerfile: builder (compiles node-pty native bindings) → runtime (Debian Bookworm slim + globally installed openclaw).
 
 ```bash
 docker build -t openclaw-railway .
 docker run --rm -p 3000:3000 -e PORT=3000 -e OPENCLAW_GATEWAY_TOKEN=test -v ./data:/data openclaw-railway
+
+# Pin a specific openclaw version:
+docker build --build-arg OPENCLAW_VERSION=2026.3.13 -t openclaw-railway .
 ```
 
 ## Common Issues
@@ -90,6 +110,10 @@ docker run --rm -p 3000:3000 -e PORT=3000 -e OPENCLAW_GATEWAY_TOKEN=test -v ./da
 - **Gateway "connect failed"**: Normal during startup — the Control UI tries to connect before gateway is ready
 - **Terminal blank/not loading**: Check browser console for JS errors. Common cause: wrong xterm.js CDN version or wrong global variable names (must use `.min.js` builds from `@xterm/xterm@5.5.0`+)
 - **Docker build fails with "spawn git ENOENT"**: Both builder and runtime stages need `git` + `ca-certificates` + gitconfig HTTPS redirect. OpenClaw and some transitive deps reference GitHub SSH URLs.
+
+## Git Workflow
+- `main` — production branch (PRs target here)
+- `staging` — active development branch
 
 ## Reference Implementation
 The `REFERENCE_ONLY/` folder contains a reference railway template for comparison. It is gitignored. Key differences from our implementation:

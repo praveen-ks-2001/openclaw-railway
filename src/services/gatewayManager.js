@@ -220,16 +220,23 @@ class GatewayManager extends EventEmitter {
       OPENCLAW_GATEWAY_BIND: 'loopback',
     };
 
-    // openclaw gateway --port 18789 --bind loopback
-    this._proc = spawn(
-      'openclaw',
-      ['gateway', '--port', String(GATEWAY_PORT), '--bind', 'loopback'],
-      {
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        detached: false,
-      }
-    );
+    // Match reference: openclaw gateway run --bind loopback --port 18789 --auth token --token <TOKEN>
+    const args = [
+      'gateway', 'run',
+      '--bind', 'loopback',
+      '--port', String(GATEWAY_PORT),
+      '--allow-unconfigured',
+    ];
+
+    if (OPENCLAW_GATEWAY_TOKEN) {
+      args.push('--auth', 'token', '--token', OPENCLAW_GATEWAY_TOKEN);
+    }
+
+    this._proc = spawn('openclaw', args, {
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      detached: false,
+    });
 
     this._proc.stdout.on('data', (chunk) => {
       const lines = chunk.toString().split('\n').filter(Boolean);
