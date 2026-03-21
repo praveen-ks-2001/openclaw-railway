@@ -7,11 +7,13 @@
 
 import { Router } from 'express';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
+import { createReadStream } from 'fs';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { config, DATA_DIR, OPENCLAW_HOME, OPENCLAW_GATEWAY_TOKEN } from '../config/index.js';
+import { config, DATA_DIR, OPENCLAW_HOME, OPENCLAW_GATEWAY_TOKEN, WRAPPER_ADMIN_PASSWORD } from '../config/index.js';
 import { gatewayManager } from '../services/gatewayManager.js';
 import { buildOpenclaWConfig, buildEnvVars } from '../services/configBuilder.js';
 import { validateSetupForm } from '../utils/validation.js';
@@ -102,18 +104,89 @@ setupRoutes.post('/pairing/approve', async (req, res) => {
   }
 });
 
-// ── POST /setup/reset — wipe config and stop gateway ──────────────
+// ── POST /setup/reset — wipe config or full factory reset ─────────
 
 setupRoutes.post('/reset', async (req, res) => {
+  const { mode } = req.body || {};
+
   try {
     await gatewayManager.stop();
-    // Remove config file so setup UI reappears on restart
-    try {
-      await fs.unlink(config.OPENCLAW_CONFIG_PATH);
-    } catch { /* already gone */ }
-    log.info('Config reset. Gateway stopped.');
-    res.json({ ok: true, message: 'Reset complete. Redirecting to setup...' });
+
+    if (mode === 'full') {
+      // Full factory reset — wipe the entire .openclaw directory
+      try {
+        await fs.rm(OPENCLAW_HOME, { recursive: true, force: true });
+      } catch { /* already gone */ }
+      // Re-create the base directories so the next setup works
+      await fs.mkdir(path.join(OPENCLAW_HOME, 'nodes'), { recursive: true });
+      await fs.mkdir(path.join(OPENCLAW_HOME, 'workspace'), { recursive: true });
+      log.info('Full factory reset complete. All data wiped.');
+      res.json({ ok: true, message: 'Full reset complete. All data wiped. Redirecting to setup...' });
+    } else {
+      // Config-only reset — remove config + env so setup wizard reappears
+      try { await fs.unlink(config.OPENCLAW_CONFIG_PATH); } catch { /* already gone */ }
+      try { await fs.unlink(config.OPENCLAW_ENV_PATH); } catch { /* already gone */ }
+      log.info('Config reset. Gateway stopped.');
+      res.json({ ok: true, message: 'Config reset complete. Redirecting to setup...' });
+    }
   } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── GET /setup/export — download a zip backup of .openclaw data ───
+
+setupRoutes.get('/export', async (req, res) => {
+  try {
+    // Check that the data directory exists
+    try {
+      await fs.access(OPENCLAW_HOME);
+    } catch {
+      return res.status(404).json({ ok: false, error: 'No data directory found to export.' });
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const zipName = `openclaw-export-${timestamp}.zip`;
+    const tmpZip = path.join(os.tmpdir(), zipName);
+
+    const zipArgs = ['-r'];
+    // Password-protect with admin password if set
+    if (WRAPPER_ADMIN_PASSWORD) {
+      zipArgs.push('-P', WRAPPER_ADMIN_PASSWORD);
+    }
+    zipArgs.push(tmpZip, OPENCLAW_HOME);
+
+    const { stdout } = await execFileAsync('zip', zipArgs, { timeout: 60_000 });
+    log.info(`Export zip created: ${zipName}`);
+
+    // Verify the zip was created
+    let stat;
+    try {
+      stat = await fs.stat(tmpZip);
+    } catch {
+      return res.status(500).json({ ok: false, error: 'Failed to create export archive.' });
+    }
+
+    res.set({
+      'Content-Type': 'application/zip',
+      'Content-Disposition': `attachment; filename="${zipName}"`,
+      'Content-Length': String(stat.size),
+    });
+
+    const stream = createReadStream(tmpZip);
+    stream.pipe(res);
+    stream.on('end', () => {
+      fs.unlink(tmpZip).catch(() => {});
+    });
+    stream.on('error', (err) => {
+      log.error('Export stream error:', err.message);
+      fs.unlink(tmpZip).catch(() => {});
+      if (!res.headersSent) {
+        res.status(500).json({ ok: false, error: 'Stream error during export.' });
+      }
+    });
+  } catch (err) {
+    log.error('Export failed:', err.message);
     res.status(500).json({ ok: false, error: err.message });
   }
 });

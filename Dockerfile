@@ -37,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     ca-certificates \
+    zip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install openclaw globally — needs git for transitive deps with GitHub URLs
