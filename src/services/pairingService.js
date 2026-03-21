@@ -120,13 +120,25 @@ class PairingService extends EventEmitter {
   async revoke(deviceId, role) {
     log.info(`Revoking device: ${deviceId} role: ${role}`);
     const env = { ...process.env, HOME: DATA_DIR, OPENCLAW_STATE_DIR: OPENCLAW_HOME };
-    const args = ['devices', 'revoke', '--device', deviceId, '--role', role];
-    if (OPENCLAW_GATEWAY_TOKEN) {
-      args.push('--token', OPENCLAW_GATEWAY_TOKEN);
+
+    // Step 1: Revoke the device token (invalidates auth) — best-effort, token may already be revoked
+    if (role) {
+      try {
+        const revokeArgs = ['devices', 'revoke', '--device', deviceId, '--role', role];
+        if (OPENCLAW_GATEWAY_TOKEN) revokeArgs.push('--token', OPENCLAW_GATEWAY_TOKEN);
+        const { stdout: revokeOut } = await execFileAsync('openclaw', revokeArgs, { env, timeout: 10_000 });
+        log.info(`Revoke result: ${revokeOut}`);
+      } catch (err) {
+        log.warn(`Revoke token failed (may already be revoked): ${err.message}`);
+      }
     }
 
-    const { stdout } = await execFileAsync('openclaw', args, { env, timeout: 10_000 });
-    log.info(`Revoke result: ${stdout}`);
+    // Step 2: Remove the device entry from the paired list
+    const removeArgs = ['devices', 'remove', deviceId];
+    if (OPENCLAW_GATEWAY_TOKEN) removeArgs.push('--token', OPENCLAW_GATEWAY_TOKEN);
+    const { stdout: removeOut } = await execFileAsync('openclaw', removeArgs, { env, timeout: 10_000 });
+    log.info(`Remove result: ${removeOut}`);
+
     this.emit('pairingUpdate', { action: 'revoked', deviceId });
   }
 

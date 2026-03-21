@@ -542,9 +542,17 @@
       <span class="nav-icon">ⓘ</span> About
     </div>
 
+    <div class="nav-group-label" style="margin-top:8px">Data</div>
+    <div class="nav-item" onclick="exportBackup()">
+      <span class="nav-icon">⤓</span> Download Backup
+    </div>
+
     <div class="nav-group-label" style="margin-top:8px">Danger</div>
-    <div class="nav-item" style="color: var(--red);" onclick="resetGateway()">
-      <span class="nav-icon">⊗</span> Reset & Wipe Config
+    <div class="nav-item" style="color: var(--yellow);" onclick="resetConfig()">
+      <span class="nav-icon">⊗</span> Reset Config
+    </div>
+    <div class="nav-item" style="color: var(--red);" onclick="factoryReset()">
+      <span class="nav-icon">⊘</span> Full Factory Reset
     </div>
   </nav>
 
@@ -1399,25 +1407,93 @@ function escHtml(str) {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Reset
+// Backup & Reset
 // ─────────────────────────────────────────────────────────────────
-async function resetGateway() {
+async function exportBackup() {
+  toast('Preparing backup…', 'ok');
+  try {
+    const res = await fetch('/setup/export', { credentials: 'same-origin' });
+    if (!res.ok) {
+      const text = await res.text();
+      let j;
+      try { j = JSON.parse(text); } catch { j = { error: text }; }
+      toast('Export failed: ' + (j.error || text), 'err');
+      return;
+    }
+
+    const disposition = res.headers.get('content-disposition') || '';
+    const match = disposition.match(/filename="?([^"]+)"?/);
+    const filename = match ? match[1] : 'openclaw-export.zip';
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    toast('Backup downloaded: ' + filename, 'ok');
+  } catch (e) {
+    toast('Export failed: ' + e.message, 'err');
+  }
+}
+
+async function resetConfig() {
   const confirmed = confirm(
-    '⚠️ This will stop the gateway and DELETE your openclaw.json config.\n\n' +
-    'API keys stored in .env will also be removed.\n\n' +
-    'You will need to go through setup again. Continue?'
+    'Reset Config\n\n' +
+    'This will stop the gateway and delete your openclaw.json config and .env file.\n\n' +
+    'Your chat history, paired devices, cron jobs, and other data will be preserved.\n\n' +
+    'You will be redirected to the setup wizard to reconfigure.\n\n' +
+    'Continue?'
   );
   if (!confirmed) return;
 
   try {
-    const res = await fetch('/setup/reset', { method: 'POST' });
-    const data = await res.json();
-    if (data.ok) {
-      toast('Config wiped. Redirecting to setup…', 'ok');
-      setTimeout(() => { window.location.href = '/setup'; }, 1500);
-    } else {
-      toast('Reset failed: ' + (data.error || 'unknown'), 'err');
-    }
+    await fetch('/setup/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'config' }),
+    });
+    toast('Config reset. Redirecting to setup…', 'ok');
+    setTimeout(() => { window.location.href = '/setup'; }, 1500);
+  } catch (e) {
+    toast('Reset failed: ' + e.message, 'err');
+  }
+}
+
+async function factoryReset() {
+  const confirmed = confirm(
+    '⚠️ FULL FACTORY RESET ⚠️\n\n' +
+    'This will PERMANENTLY DELETE everything:\n\n' +
+    '• All chat history and conversations\n' +
+    '• All paired devices\n' +
+    '• All cron jobs and schedules\n' +
+    '• All skills, plugins, and memory\n' +
+    '• Gateway config and API keys (.env)\n' +
+    '• Workspace data\n\n' +
+    'This cannot be undone. Consider downloading a backup first.\n\n' +
+    'Are you absolutely sure?'
+  );
+  if (!confirmed) return;
+
+  const doubleConfirm = confirm(
+    'FINAL CONFIRMATION\n\n' +
+    'All data will be wiped and you will start from scratch.\n\n' +
+    'Proceed with full factory reset?'
+  );
+  if (!doubleConfirm) return;
+
+  try {
+    await fetch('/setup/reset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'full' }),
+    });
+    toast('Full reset complete. Redirecting to setup…', 'ok');
+    setTimeout(() => { window.location.href = '/setup'; }, 1500);
   } catch (e) {
     toast('Reset failed: ' + e.message, 'err');
   }
