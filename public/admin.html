@@ -424,6 +424,71 @@
   .chip.red   { background: rgba(248,81,73,0.15);  color: var(--red); }
   .chip.yellow { background: rgba(210,153,34,0.15); color: var(--yellow); }
   .chip.blue  { background: rgba(88,166,255,0.15); color: var(--blue); }
+
+  /* ── How to Use panel ──────────────────────────── */
+  .howto-step {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+  .howto-step-num {
+    width: 32px; height: 32px;
+    background: var(--accent);
+    color: white;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-weight: 600;
+    font-size: 14px;
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .howto-step-content { flex: 1; }
+  .howto-step-title {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 6px;
+  }
+  .howto-step-content p {
+    color: var(--text-dim);
+    line-height: 1.7;
+    margin-bottom: 10px;
+  }
+  .howto-step-content code {
+    background: var(--surface2);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent2);
+  }
+  .howto-img-placeholder {
+    background: var(--surface);
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 32px 16px;
+    text-align: center;
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    margin-top: 8px;
+  }
+  .howto-img-placeholder img {
+    max-width: 100%;
+    border-radius: 8px;
+    display: block;
+    margin: 0 auto;
+  }
+  .howto-img-placeholder.has-img {
+    border-style: solid;
+    border-color: var(--border);
+    padding: 8px;
+  }
+  .howto-img-placeholder.has-img span { display: none; }
 </style>
 </head>
 <body>
@@ -467,11 +532,16 @@
     <div class="nav-item" onclick="window.open('/', '_blank')">
       <span class="nav-icon">↗</span> OpenClaw UI
     </div>
-    <div class="nav-item" onclick="window.location='/'">
-      <span class="nav-icon">⌂</span> Home
-    </div>
     <div class="nav-item" onclick="window.location='/setup'">
-      <span class="nav-icon">✎</span> Reconfigure
+      <span class="nav-icon">✎</span> Setup
+    </div>
+
+    <div class="nav-group-label" style="margin-top:8px">Help</div>
+    <div class="nav-item" data-panel="howto" onclick="navigate('howto')">
+      <span class="nav-icon">▶</span> How to Use
+    </div>
+    <div class="nav-item" data-panel="about" onclick="navigate('about')">
+      <span class="nav-icon">ⓘ</span> About
     </div>
 
     <div class="nav-group-label" style="margin-top:8px">Danger</div>
@@ -592,7 +662,7 @@
       <div class="panel-header">
         <div class="panel-title">Config Editor</div>
         <div style="font-size:12px; color: var(--text-dim); font-family: var(--font-mono);">
-          ~/.openclaw/openclaw.json — saved changes trigger hot-reload
+          Manually update the OpenClaw config &mdash; ~/.openclaw/openclaw.json &mdash; saved changes trigger hot-reload
         </div>
       </div>
       <textarea id="config-editor" spellcheck="false" placeholder="Loading config..."></textarea>
@@ -601,6 +671,154 @@
         <button class="btn" onclick="loadConfig()">↺ Reload from Disk</button>
         <button class="btn danger" onclick="restartAfterSave()">Save & Restart Gateway</button>
         <span id="config-status" style="font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); align-self: center; margin-left: auto;"></span>
+      </div>
+    </div>
+
+    <!-- HOW TO USE -->
+    <div class="panel" id="panel-howto">
+      <div class="panel-header">
+        <div class="panel-title">How to Use</div>
+        <div style="font-size:12px; color: var(--text-dim); font-family: var(--font-mono);">
+          Getting started after deployment
+        </div>
+      </div>
+      <div class="panel-body">
+        <!-- Image URL config -->
+        <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:16px 20px; margin-bottom:24px;">
+          <div style="font-size:12px; color:var(--text-dim); margin-bottom:10px; font-family:var(--font-mono); letter-spacing:0.05em; text-transform:uppercase;">Guide Image URLs (admin only)</div>
+          <p style="font-size:12px; color:var(--text-dim); margin-bottom:12px;">Paste image URLs below and click Apply. They will be used in the steps below.</p>
+          <div style="display:grid; gap:8px;">
+            <div style="display:flex; gap:8px; align-items:center;">
+              <label style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); min-width:120px;">Step 1 (Admin):</label>
+              <input type="text" class="guide-img-input" data-step="1" placeholder="https://..." style="flex:1; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--font-mono); font-size:12px; padding:6px 10px; outline:none;">
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <label style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); min-width:120px;">Step 2 (Open UI):</label>
+              <input type="text" class="guide-img-input" data-step="2" placeholder="https://..." style="flex:1; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--font-mono); font-size:12px; padding:6px 10px; outline:none;">
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <label style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); min-width:120px;">Step 3 (Token):</label>
+              <input type="text" class="guide-img-input" data-step="3" placeholder="https://..." style="flex:1; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--font-mono); font-size:12px; padding:6px 10px; outline:none;">
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <label style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); min-width:120px;">Step 4 (Pairing):</label>
+              <input type="text" class="guide-img-input" data-step="4" placeholder="https://..." style="flex:1; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--font-mono); font-size:12px; padding:6px 10px; outline:none;">
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <label style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); min-width:120px;">Step 5 (Approve):</label>
+              <input type="text" class="guide-img-input" data-step="5" placeholder="https://..." style="flex:1; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--font-mono); font-size:12px; padding:6px 10px; outline:none;">
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <label style="font-family:var(--font-mono); font-size:11px; color:var(--text-dim); min-width:120px;">Step 6 (Connected):</label>
+              <input type="text" class="guide-img-input" data-step="6" placeholder="https://..." style="flex:1; background:var(--bg); border:1px solid var(--border); border-radius:6px; color:var(--text); font-family:var(--font-mono); font-size:12px; padding:6px 10px; outline:none;">
+            </div>
+            <button class="btn sm" onclick="applyGuideImages()" style="width:fit-content; margin-top:4px;">Apply Image URLs</button>
+          </div>
+        </div>
+
+        <!-- Steps -->
+        <div style="max-width:720px;">
+          <h3 style="font-family:var(--font-mono); font-size:16px; color:var(--accent); margin-bottom:20px;">Connecting to OpenClaw after Setup</h3>
+          <p style="color:var(--text-dim); margin-bottom:24px;">Once your Railway deploy is live and the setup wizard is complete, follow these steps to connect to the OpenClaw UI from your browser.</p>
+
+          <div class="howto-step">
+            <div class="howto-step-num">1</div>
+            <div class="howto-step-content">
+              <div class="howto-step-title">Open the Admin Dashboard</div>
+              <p>Navigate to <code>/admin</code> on your deployed service URL. If you set a <code>WRAPPER_ADMIN_PASSWORD</code>, you will be prompted to log in. Check the <strong>Status</strong> panel to confirm the gateway is running.</p>
+              <div class="howto-img-placeholder" id="guide-img-1">
+                <span>Image placeholder &mdash; Step 1: Admin Dashboard Status</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="howto-step">
+            <div class="howto-step-num">2</div>
+            <div class="howto-step-content">
+              <div class="howto-step-title">Open the OpenClaw UI</div>
+              <p>Click the <strong>"Open OpenClaw UI"</strong> button in the top-right corner of the admin dashboard (or the link in the sidebar). This opens the main OpenClaw interface in a new tab.</p>
+              <div class="howto-img-placeholder" id="guide-img-2">
+                <span>Image placeholder &mdash; Step 2: Open OpenClaw UI button</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="howto-step">
+            <div class="howto-step-num">3</div>
+            <div class="howto-step-content">
+              <div class="howto-step-title">Enter the Gateway Token</div>
+              <p>The OpenClaw UI will prompt you for a <strong>Gateway Token</strong>. Copy it from the Admin Dashboard's Status panel (under "Gateway Token") and paste it into the connection screen. Click <strong>Connect</strong>.</p>
+              <div class="howto-img-placeholder" id="guide-img-3">
+                <span>Image placeholder &mdash; Step 3: Gateway Token entry</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="howto-step">
+            <div class="howto-step-num">4</div>
+            <div class="howto-step-content">
+              <div class="howto-step-title">A Pairing Request is Sent</div>
+              <p>Your browser sends a device pairing request to the gateway. You will see a notification in the admin dashboard header. Switch back to the <strong>Admin Dashboard</strong> tab.</p>
+              <div class="howto-img-placeholder" id="guide-img-4">
+                <span>Image placeholder &mdash; Step 4: Pairing request notification</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="howto-step">
+            <div class="howto-step-num">5</div>
+            <div class="howto-step-content">
+              <div class="howto-step-title">Approve the Pairing Request</div>
+              <p>Go to the <strong>Pairing</strong> panel in the sidebar. You will see your browser listed under "Pending Requests". Click <strong>Approve</strong> to authorize it.</p>
+              <div class="howto-img-placeholder" id="guide-img-5">
+                <span>Image placeholder &mdash; Step 5: Approve pairing request</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="howto-step">
+            <div class="howto-step-num">6</div>
+            <div class="howto-step-content">
+              <div class="howto-step-title">Go Back and Connect</div>
+              <p>Switch back to the <strong>OpenClaw UI</strong> tab. It should automatically detect the approved pairing and connect. You are now in the OpenClaw UI and ready to chat with your AI assistant!</p>
+              <div class="howto-img-placeholder" id="guide-img-6">
+                <span>Image placeholder &mdash; Step 6: Connected to OpenClaw</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ABOUT -->
+    <div class="panel" id="panel-about">
+      <div class="panel-header">
+        <div class="panel-title">About</div>
+      </div>
+      <div class="panel-body">
+        <div style="max-width:600px;">
+          <h3 style="font-family:var(--font-mono); font-size:18px; color:var(--accent); margin-bottom:16px;">OpenClaw Admin Panel</h3>
+          <p style="line-height:1.7; margin-bottom:16px;">
+            This admin panel is a lightweight management dashboard for your self-hosted OpenClaw instance on Railway.
+            It lets you monitor the gateway status, stream live logs, manage device pairing, open an interactive terminal,
+            and edit your OpenClaw configuration &mdash; all from the browser, no SSH or CLI required.
+          </p>
+          <p style="line-height:1.7; margin-bottom:24px;">
+            The admin panel is part of the <strong>openclaw-railway-template</strong> &mdash; an Express wrapper that handles
+            process supervision, WebSocket proxying, auth, and a setup wizard so you can deploy OpenClaw on Railway with a single click.
+          </p>
+
+          <div style="background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; margin-bottom:16px;">
+            <div style="font-family:var(--font-mono); font-size:12px; letter-spacing:0.05em; text-transform:uppercase; color:var(--text-dim); margin-bottom:12px;">Issues &amp; Feature Requests</div>
+            <p style="line-height:1.7; margin-bottom:12px;">
+              If you are facing any issues or would like to request additional functionality, please open an issue on GitHub:
+            </p>
+            <a href="https://github.com/praveen-ks-2001/openclaw-railway/issues" target="_blank" rel="noopener"
+               style="display:inline-flex; align-items:center; gap:8px; background:var(--surface2); border:1px solid var(--border); border-radius:8px; padding:10px 16px; color:var(--blue); font-family:var(--font-mono); font-size:13px; text-decoration:none; transition:border-color 0.15s;">
+              github.com/praveen-ks-2001/openclaw-railway/issues
+            </a>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1213,6 +1431,43 @@ function escHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+// ─────────────────────────────────────────────────────────────────
+// Guide images (How to Use panel)
+// ─────────────────────────────────────────────────────────────────
+function applyGuideImages() {
+  document.querySelectorAll('.guide-img-input').forEach(input => {
+    const step = input.dataset.step;
+    const url = input.value.trim();
+    const el = document.getElementById('guide-img-' + step);
+    if (!el) return;
+    if (url) {
+      el.innerHTML = '<img src="' + escHtml(url) + '" alt="Step ' + step + ' screenshot">';
+      el.classList.add('has-img');
+      localStorage.setItem('guide-img-' + step, url);
+    } else {
+      localStorage.removeItem('guide-img-' + step);
+    }
+  });
+  toast('Guide images updated', 'ok');
+}
+
+// Restore saved guide images on load
+function restoreGuideImages() {
+  for (let i = 1; i <= 6; i++) {
+    const url = localStorage.getItem('guide-img-' + i);
+    if (url) {
+      const input = document.querySelector('.guide-img-input[data-step="' + i + '"]');
+      if (input) input.value = url;
+      const el = document.getElementById('guide-img-' + i);
+      if (el) {
+        el.innerHTML = '<img src="' + escHtml(url) + '" alt="Step ' + i + ' screenshot">';
+        el.classList.add('has-img');
+      }
+    }
+  }
+}
+restoreGuideImages();
 
 // ─────────────────────────────────────────────────────────────────
 // Reset
