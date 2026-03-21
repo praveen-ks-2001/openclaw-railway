@@ -20,11 +20,8 @@ export function validateSetupForm(body) {
     errors.push('API key is required.');
   }
 
-  // ── Model selection ─────────────────────────────────────────────
-  data.model = (body.model || '').trim();
-  if (!data.model) {
-    errors.push('Please specify a model name.');
-  }
+  // ── Model selection (optional — defaults applied in configBuilder) ──
+  data.model = (body.model || '').trim() || undefined;
 
   // ── Channels ────────────────────────────────────────────────────
 
@@ -72,9 +69,6 @@ export function validateSetupForm(body) {
   );
   data.sessionResetMode = oneOf(body.sessionResetMode, ['off','daily','idle',undefined], undefined);
   data.sessionResetHour = body.sessionResetHour ? String(parseInt(body.sessionResetHour, 10)) : undefined;
-
-  // ── Heartbeat ───────────────────────────────────────────────────
-  data.heartbeatEvery = (body.heartbeatEvery || '').trim() || undefined;
 
   return { errors, data };
 }

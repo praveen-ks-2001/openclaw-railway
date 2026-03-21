@@ -435,9 +435,7 @@
   <div id="status-label">connecting...</div>
   <div class="header-spacer"></div>
   <span class="pairing-badge" id="header-pairing-badge">0</span>
-  <button class="header-btn" onclick="navigate('pairing')">Pairing</button>
-  <button class="header-btn" onclick="navigate('terminal')">Terminal</button>
-  <button class="header-btn" onclick="navigate('logs')">Logs</button>
+  <a href="/" target="_blank" rel="noopener" class="header-btn" style="background:var(--accent);border-color:var(--accent);color:white;text-decoration:none;font-weight:600;">Open OpenClaw UI</a>
 </div>
 
 <!-- Layout -->
@@ -466,7 +464,7 @@
     </div>
 
     <div class="nav-group-label" style="margin-top:8px">Navigate</div>
-    <div class="nav-item" onclick="window.open('/ui/', '_blank')">
+    <div class="nav-item" onclick="window.open('/', '_blank')">
       <span class="nav-icon">↗</span> OpenClaw UI
     </div>
     <div class="nav-item" onclick="window.location='/'">
@@ -970,6 +968,12 @@ function sendResize() {
 }
 
 function reconnectTerminal() {
+  const btn = document.querySelector('#panel-terminal .btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Connecting...';
+    setTimeout(() => { btn.disabled = false; btn.textContent = '↺ Reconnect'; }, 3000);
+  }
   if (term) term.write('\r\n\x1b[33m[manual reconnect...]\x1b[0m\r\n');
   connectTerminalWS();
 }
@@ -1021,6 +1025,8 @@ function startPairingSSE() {
 }
 
 async function refreshPairing() {
+  const btn = document.querySelector('#panel-pairing .btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; }
   try {
     const [pd, pr] = await Promise.all([
       api('/pairing/pending'),
@@ -1031,6 +1037,8 @@ async function refreshPairing() {
     updatePairingBadge((pd.pending || []).length);
   } catch (e) {
     toast('Failed to load pairing data: ' + e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '↺ Refresh'; }
   }
 }
 
