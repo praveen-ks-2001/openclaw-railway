@@ -91,9 +91,6 @@ setupRoutes.post('/pairing/approve', async (req, res) => {
   try {
     const env = { ...process.env, HOME: DATA_DIR, OPENCLAW_STATE_DIR: OPENCLAW_HOME };
     const args = ['pairing', 'approve', String(channel), String(code)];
-    if (OPENCLAW_GATEWAY_TOKEN) {
-      args.push('--token', OPENCLAW_GATEWAY_TOKEN);
-    }
 
     const { stdout } = await execFileAsync('openclaw', args, { env, timeout: 15_000 });
     log.info(`Pairing approve result: ${stdout}`);
