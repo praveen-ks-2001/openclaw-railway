@@ -1,18 +1,13 @@
 /**
  * services/pairingService.js
  *
- * Manages device pairing state.
+ * Manages device pairing state via the openclaw CLI.
  *
- * OpenClaw stores pairing state in:
- *   ~/.openclaw/nodes/pending.json
- *   ~/.openclaw/nodes/paired.json
+ * Uses `openclaw devices list/approve/reject --token <TOKEN>` commands
+ * (same approach as the reference railway template) instead of reading
+ * JSON files directly, which is more reliable across openclaw versions.
  *
- * To approve/reject, we call the openclaw CLI:
- *   openclaw devices approve <requestId>
- *   openclaw devices reject <requestId>
- *
- * We also watch the pending.json file with chokidar and emit
- * 'pairingUpdate' events so the admin UI can poll/stream in real time.
+ * Also watches ~/.openclaw/nodes/pending.json for real-time SSE updates.
  */
 
 import { EventEmitter } from 'events';
@@ -21,7 +16,7 @@ import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
 import chokidar from 'chokidar';
-import { OPENCLAW_HOME, DATA_DIR } from '../config/index.js';
+import { OPENCLAW_HOME, DATA_DIR, OPENCLAW_GATEWAY_TOKEN } from '../config/index.js';
 import { log } from '../utils/log.js';
 
 const execFileAsync = promisify(execFile);
@@ -36,37 +31,116 @@ class PairingService extends EventEmitter {
     this._startWatching();
   }
 
+  /**
+   * List devices using the openclaw CLI.
+   * Returns { pending: [...], paired: [...] } or falls back to file reads.
+   */
+  async listDevices() {
+    if (!OPENCLAW_GATEWAY_TOKEN) {
+      return { pending: await this._readFile(PENDING_PATH, []), paired: await this._readFile(PAIRED_PATH, []) };
+    }
+
+    try {
+      const env = { ...process.env, HOME: DATA_DIR, OPENCLAW_STATE_DIR: OPENCLAW_HOME };
+      const { stdout } = await execFileAsync(
+        'openclaw',
+        ['devices', 'list', '--json', '--token', OPENCLAW_GATEWAY_TOKEN],
+        { env, timeout: 10_000 }
+      );
+
+      log.info(`devices list output: ${stdout}`);
+
+      // Extract JSON from output (CLI may print extra text before the JSON)
+      const jsonMatch = stdout.match(/(\{[\s\S]*\}|\[[\s\S]*\])\s*$/);
+      if (jsonMatch) {
+        const data = JSON.parse(jsonMatch[1]);
+        return {
+          pending: Array.isArray(data.pending) ? data.pending : [],
+          paired: Array.isArray(data.paired) ? data.paired : [],
+        };
+      }
+
+      log.warn('No JSON found in devices list output, falling back to file reads');
+    } catch (err) {
+      log.warn(`devices list CLI failed (${err.message}), falling back to file reads`);
+    }
+
+    // Fallback to file reads
+    return {
+      pending: await this._readFile(PENDING_PATH, []),
+      paired: await this._readFile(PAIRED_PATH, []),
+    };
+  }
+
   async getPending() {
-    return readJsonFile(PENDING_PATH, []);
+    const { pending } = await this.listDevices();
+    return pending;
   }
 
   async getPaired() {
-    return readJsonFile(PAIRED_PATH, []);
+    const { paired } = await this.listDevices();
+    return paired;
   }
 
   /**
-   * Approve a pending pair request by calling the openclaw CLI.
-   * openclaw writes back to paired.json and removes from pending.json.
+   * Approve a pending pair request.
+   * Uses: openclaw devices approve [requestId] --token <TOKEN>
    */
   async approve(requestId) {
     log.info(`Approving pairing request: ${requestId}`);
-    const env = { ...process.env, HOME: DATA_DIR };
-    await execFileAsync('openclaw', ['devices', 'approve', requestId], { env });
+    const env = { ...process.env, HOME: DATA_DIR, OPENCLAW_STATE_DIR: OPENCLAW_HOME };
+    const args = ['devices', 'approve'];
+    if (requestId) {
+      args.push(String(requestId));
+    } else {
+      args.push('--latest');
+    }
+    if (OPENCLAW_GATEWAY_TOKEN) {
+      args.push('--token', OPENCLAW_GATEWAY_TOKEN);
+    }
+
+    const { stdout } = await execFileAsync('openclaw', args, { env, timeout: 10_000 });
+    log.info(`Approve result: ${stdout}`);
     this.emit('pairingUpdate', { action: 'approved', requestId });
   }
 
   async reject(requestId) {
     log.info(`Rejecting pairing request: ${requestId}`);
-    const env = { ...process.env, HOME: DATA_DIR };
-    await execFileAsync('openclaw', ['devices', 'reject', requestId], { env });
+    const env = { ...process.env, HOME: DATA_DIR, OPENCLAW_STATE_DIR: OPENCLAW_HOME };
+    const args = ['devices', 'reject', String(requestId)];
+    if (OPENCLAW_GATEWAY_TOKEN) {
+      args.push('--token', OPENCLAW_GATEWAY_TOKEN);
+    }
+
+    const { stdout } = await execFileAsync('openclaw', args, { env, timeout: 10_000 });
+    log.info(`Reject result: ${stdout}`);
     this.emit('pairingUpdate', { action: 'rejected', requestId });
   }
 
   async revoke(deviceId, role) {
     log.info(`Revoking device: ${deviceId} role: ${role}`);
-    const env = { ...process.env, HOME: DATA_DIR };
-    await execFileAsync('openclaw', ['devices', 'revoke', '--device', deviceId, '--role', role], { env });
+    const env = { ...process.env, HOME: DATA_DIR, OPENCLAW_STATE_DIR: OPENCLAW_HOME };
+    const args = ['devices', 'revoke', '--device', deviceId, '--role', role];
+    if (OPENCLAW_GATEWAY_TOKEN) {
+      args.push('--token', OPENCLAW_GATEWAY_TOKEN);
+    }
+
+    const { stdout } = await execFileAsync('openclaw', args, { env, timeout: 10_000 });
+    log.info(`Revoke result: ${stdout}`);
     this.emit('pairingUpdate', { action: 'revoked', deviceId });
+  }
+
+  // ─── Private ─────────────────────────────────────────────────────
+
+  async _readFile(filePath, defaultVal) {
+    try {
+      const raw = await fs.readFile(filePath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+      return Object.entries(parsed).map(([id, v]) => ({ id, ...v }));
+    } catch {
+      return defaultVal;
+    }
   }
 
   _startWatching() {
@@ -95,19 +169,6 @@ class PairingService extends EventEmitter {
     this._watcher.on('error', (err) => {
       log.warn('Pairing file watcher error (non-fatal):', err.message);
     });
-  }
-}
-
-async function readJsonFile(filePath, defaultVal) {
-  try {
-    const raw = await fs.readFile(filePath, 'utf8');
-    const parsed = JSON.parse(raw);
-    // Normalize: openclaw may store as object map or array
-    if (Array.isArray(parsed)) return parsed;
-    // Object map: { [id]: {...} }
-    return Object.entries(parsed).map(([id, v]) => ({ id, ...v }));
-  } catch {
-    return defaultVal;
   }
 }
 

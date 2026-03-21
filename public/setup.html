@@ -181,8 +181,8 @@
   </div>
 
   <div class="field">
-    <label for="model">Model <span class="req">*</span> <span class="hint" id="model-hint"></span></label>
-    <input type="text" id="model" name="model" placeholder="e.g. anthropic/claude-sonnet-4-6">
+    <label for="model">Model <span class="hint">optional — defaults to best for provider</span> <span class="hint" id="model-hint"></span></label>
+    <input type="text" id="model" name="model" placeholder="Leave blank for default">
   </div>
 
   <div class="field">
@@ -289,20 +289,14 @@
 <div class="card">
   <div class="card-title">&#x2699;&#xFE0F; Session Settings <span class="required-note">optional</span></div>
 
-  <div class="field-row">
-    <div class="field">
-      <label for="sessionScope">Session Scope <span class="hint">how conversations are grouped</span></label>
-      <select id="sessionScope" name="sessionScope">
-        <option value="per-channel-peer" selected>per-channel-peer (recommended)</option>
-        <option value="per-peer">per-peer</option>
-        <option value="main">main (shared)</option>
-        <option value="per-account-channel-peer">per-account-channel-peer</option>
-      </select>
-    </div>
-    <div class="field">
-      <label for="heartbeatEvery">Heartbeat <span class="hint">e.g. 30m, 2h</span></label>
-      <input type="text" id="heartbeatEvery" name="heartbeatEvery" placeholder="30m">
-    </div>
+  <div class="field">
+    <label for="sessionScope">Session Scope <span class="hint">how conversations are grouped</span></label>
+    <select id="sessionScope" name="sessionScope">
+      <option value="per-channel-peer" selected>per-channel-peer (recommended)</option>
+      <option value="per-peer">per-peer</option>
+      <option value="main">main (shared)</option>
+      <option value="per-account-channel-peer">per-account-channel-peer</option>
+    </select>
   </div>
 
   <div class="field">
@@ -326,9 +320,9 @@
 <script>
 // ── Provider defaults ─────────────────────────────────────────────
 const providerDefaults = {
-  anthropic:  { model: 'anthropic/claude-sonnet-4-6',    hint: 'sk-ant-...', label: 'Anthropic API Key' },
-  openai:     { model: 'openai/gpt-4.1-mini',            hint: 'sk-...',     label: 'OpenAI API Key' },
-  google:     { model: 'google/gemini-2.5-flash',        hint: 'AIza...',    label: 'Google API Key' },
+  anthropic:  { model: 'anthropic/claude-opus-4-6',      hint: 'sk-ant-...', label: 'Anthropic API Key' },
+  openai:     { model: 'openai/codex-mini-latest',       hint: 'sk-...',     label: 'OpenAI API Key' },
+  google:     { model: 'google/gemini-2.5-pro',          hint: 'AIza...',    label: 'Google API Key' },
   openrouter: { model: 'openrouter/auto',                hint: 'sk-or-...',  label: 'OpenRouter API Key' },
   groq:       { model: 'groq/llama-3.3-70b-versatile',   hint: 'gsk_...',    label: 'Groq API Key' },
 };
@@ -337,11 +331,8 @@ function onProviderChange() {
   const sel = document.getElementById('provider');
   const def = providerDefaults[sel.value];
   if (def) {
-    document.getElementById('model').placeholder = def.model;
-    if (!document.getElementById('model').value) {
-      document.getElementById('model').value = def.model;
-    }
-    document.getElementById('model-hint').textContent = def.model;
+    document.getElementById('model').placeholder = 'Default: ' + def.model;
+    document.getElementById('model-hint').textContent = 'default: ' + def.model;
     document.getElementById('apikey-label').textContent = def.label;
     document.getElementById('apiKey').placeholder = def.hint;
   }

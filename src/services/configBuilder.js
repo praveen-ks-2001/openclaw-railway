@@ -86,8 +86,16 @@ import { OPENCLAW_GATEWAY_TOKEN } from '../config/index.js';
 
 // ─── Section builders ──────────────────────────────────────────────
 
+const PROVIDER_DEFAULT_MODEL = {
+  anthropic:  'anthropic/claude-opus-4-6',
+  openai:     'openai/codex-mini-latest',
+  google:     'google/gemini-2.5-pro',
+  openrouter: 'openrouter/auto',
+  groq:       'groq/llama-3.3-70b-versatile',
+};
+
 function buildAgentsSection(formData) {
-  const model = formData.model || 'anthropic/claude-opus-4-6';
+  const model = formData.model || PROVIDER_DEFAULT_MODEL[formData.provider] || 'anthropic/claude-opus-4-6';
   const workspace = '/data/.openclaw/workspace';
 
   return {
@@ -97,9 +105,6 @@ function buildAgentsSection(formData) {
         ...(formData.fallbackModel ? { fallbacks: [formData.fallbackModel] } : {}),
       },
       workspace,
-      ...(formData.heartbeatEvery
-        ? { heartbeat: { every: formData.heartbeatEvery, target: 'last' } }
-        : {}),
     },
   };
 }
@@ -127,9 +132,11 @@ function buildGatewaySection(formData) {
   section.trustedProxies = ['127.0.0.1', '::1'];
 
   // Allow the wrapper's origin to access the Control UI.
-  // Device auth is enabled (default) — users pair via /admin panel.
+  // allowInsecureAuth lets the gateway accept token-based auth from the
+  // proxy without requiring device pairing for browser sessions.
   section.controlUi = {
     allowedOrigins: ['*'],
+    allowInsecureAuth: true,
   };
 
   return section;
