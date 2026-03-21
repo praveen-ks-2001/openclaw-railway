@@ -87,15 +87,15 @@ import { OPENCLAW_GATEWAY_TOKEN } from '../config/index.js';
 // ─── Section builders ──────────────────────────────────────────────
 
 const PROVIDER_DEFAULT_MODEL = {
-  anthropic:  'anthropic/claude-opus-4-6',
-  openai:     'openai/codex-mini-latest',
+  anthropic:  'anthropic/claude-sonnet-4',
+  openai:     'openai/gpt-4.1',
   google:     'google/gemini-2.5-pro',
   openrouter: 'openrouter/auto',
   groq:       'groq/llama-3.3-70b-versatile',
 };
 
 function buildAgentsSection(formData) {
-  const model = formData.model || PROVIDER_DEFAULT_MODEL[formData.provider] || 'anthropic/claude-opus-4-6';
+  const model = formData.model || PROVIDER_DEFAULT_MODEL[formData.provider] || 'anthropic/claude-sonnet-4';
   const workspace = '/data/.openclaw/workspace';
 
   return {
