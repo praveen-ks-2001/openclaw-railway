@@ -119,10 +119,11 @@ function buildGatewaySection(formData) {
     reload: { mode: 'hybrid' },
   };
 
-  // Gateway token — always from env var (set in Railway Variables)
+  // Gateway token — written to config so `openclaw tui` can read it.
+  // Auth mode is passed as CLI flag to `gateway run` (gatewayManager.js);
+  // don't set `mode` here to avoid conflicts.
   if (OPENCLAW_GATEWAY_TOKEN) {
     section.auth = {
-      mode: 'token',
       token: OPENCLAW_GATEWAY_TOKEN,
     };
   }
