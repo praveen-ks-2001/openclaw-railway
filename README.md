@@ -1,20 +1,23 @@
-![OpenClaw logo](placeholder-logo.png)
+![OpenClaw logo](https://opengraph.githubassets.com/027231e34679f13d043884e2d69bd69e052e500e3bf7b5b03c72101eda21b724/openclaw/openclaw)
 
 # Deploy and Host OpenClaw
 
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/deploy/self-host-openclaw?referralCode=QXdhdr&utm_medium=integration&utm_source=template&utm_campaign=generic)
+
 Deploy OpenClaw — the open-source personal AI assistant with 328k+ GitHub stars — on Railway with a single click. OpenClaw is a self-hosted agent runtime that connects your favorite chat apps (WhatsApp, Telegram, Discord, Slack, iMessage, and 20+ more) to powerful AI models like Claude, GPT, and Gemini, letting an AI agent browse the web, manage files, run commands, and work autonomously on your behalf.
 
-Self-host OpenClaw on Railway with this template and get a fully configured gateway, a browser-based setup wizard, admin dashboard with live terminal, and persistent storage — no CLI or SSH access needed. The Express wrapper handles WebSocket proxying, device pairing, process supervision with auto-restart, and token-based auth out of the box.
+Self-host OpenClaw on Railway with this template and get a fully configured **gateway, a browser-based setup wizard, admin dashboard with live terminal, and persistent storage** — no CLI or SSH access needed. 
 
-![OpenClaw Railway architecture](placeholder-architecture.png)
 
-## 🚀 Getting Started with OpenClaw on Railway
+## 🚀 Getting Started with OpenClaw on Railway | Deployment Guide
 
 Once your Railway deploy is live, open your service URL — you'll be redirected to the `/setup` wizard automatically. Pick your AI provider (Anthropic, OpenAI, Google Gemini, Groq, or OpenRouter), paste your API key, and optionally configure messaging channels like Telegram or Discord. Click **Launch OpenClaw** and the gateway starts within seconds.
 
 ### Step 1: Initial Setup via `/setup`
 
-The `/setup` page is a **one-time configuration wizard** — it's where you select your AI provider, paste your API key, and optionally wire up messaging channels (Telegram, Discord, Slack, etc.). Once setup is complete, `/setup` **cannot be used again** without first wiping the existing configuration from the `/admin` panel. This is by design — `/setup` is an open URL (no password), so it only works when no config exists yet.
+The `/setup` page is a **one-time configuration wizard** — it's where you select your AI provider, paste your API key, and optionally wire up messaging channels (Telegram, Discord, Slack, etc.). 
+
+Once setup is complete, `/setup` **cannot be used again** without first wiping the existing configuration from the `/admin` panel. This is by design — `/setup` is an open URL (no password), so it only works when no config exists yet.
 
 ![OpenClaw setup wizard](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088297/openclaw_setup_page_rxowv8.png)
 
@@ -32,14 +35,8 @@ The `/admin` page is password-protected — log in with your `WRAPPER_ADMIN_PASS
 
 ![OpenClaw admin dashboard](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088294/Openclaw_admin_UI_qzsxep.png)
 
-```bash
-# Useful terminal commands from the admin terminal
-openclaw doctor           # diagnose issues
-openclaw models status    # verify API key auth
-openclaw devices list     # list paired devices
-```
 
-> 💡 **Tip:** Full terminal access to your OpenClaw container is available directly from the **Admin → Terminal** panel — no SSH needed.
+> 💡 **Tip:** Full terminal access to your OpenClaw container is available directly from the **Admin → Terminal** panel.
 
 ![OpenClaw admin terminal — run openclaw CLI commands directly in the browser](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088288/Openclaw_admin_TUI_elvlpt.png)
 
@@ -65,7 +62,7 @@ If this is your **first time connecting**, you'll need to set up the **OpenClaw 
 
 ![OpenClaw UI — fully connected and ready to use](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088288/OpenClaw_UI_after_full_setup_rzkl2x.png)
 
-## 📖 About Hosting OpenClaw
+## About Hosting OpenClaw 📖
 
 OpenClaw (formerly ClawdBot/MoltBot) is a fully open-source (MIT), local-first personal AI agent created by Peter Steinberger. It runs as a long-lived Node.js gateway process that routes messages between chat platforms and AI coding agents.
 
@@ -78,9 +75,8 @@ OpenClaw (formerly ClawdBot/MoltBot) is a fully open-source (MIT), local-first p
 - 🔒 Self-hosted & private — your data, conversations, and memory stay on your machine
 - 📱 Companion apps for macOS, iOS, and Android
 
-This template wraps the OpenClaw gateway in an Express server that provides HTTP/WebSocket reverse proxying, a setup wizard, and an admin dashboard — all backed by a Railway volume for persistence.
 
-## ✅ Why Deploy OpenClaw on Railway
+## Why Deploy OpenClaw on Railway ✅
 
 One-click deploy with zero server configuration:
 
@@ -91,35 +87,20 @@ One-click deploy with zero server configuration:
 - 🌐 Browser-based setup wizard — no terminal or SSH required
 - 📊 Built-in admin dashboard with live logs, terminal, and device pairing
 
-## 💡 Common Use Cases
+## Common Use Cases 💡
 
 - **Personal AI assistant** — a 24/7 AI agent you message on WhatsApp or Telegram that can browse, code, and research autonomously
-- **Team coding agent** — self-hosted alternative to cloud AI assistants with full control over model selection and data privacy
 - **Automation hub** — schedule recurring tasks via the heartbeat daemon: daily summaries, monitoring, data pipelines
-- **Multi-model gateway** — route requests to Claude, GPT, Gemini, or local models with automatic fallback
 
-## 📦 Dependencies for OpenClaw
+## Dependencies for OpenClaw 📦
 
 - **OpenClaw** — installed globally in Docker via `npm install -g openclaw@${OPENCLAW_VERSION}` ([GitHub](https://github.com/openclaw/openclaw))
 - **Node.js 22** — runtime for both the Express wrapper and OpenClaw gateway
 - **node-pty** — native PTY for the admin terminal (compiled in Docker build stage)
 
-### Environment Variables Reference
-
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `OPENCLAW_GATEWAY_TOKEN` | Auth token for the OpenClaw gateway. Used for proxy auth and device management | Yes |
-| `WRAPPER_ADMIN_PASSWORD` | Password to protect `/admin`, `/setup`, and `/api/*` endpoints | No |
-| `OPENCLAW_DATA_DIR` | Override the persistent data directory (default: `/data`) | No |
-| `OPENCLAW_VERSION` | Pin a specific OpenClaw version at build time (e.g., `2026.3.13`). Set as a Railway **build arg**, not runtime env | No |
-
 ### Deployment Dependencies
 
-- **Runtime:** Node.js >= 22 on Debian Bookworm (slim)
-- **Build tools:** python3, make, g++ (for node-pty native compilation)
-- **System packages:** bash, git, curl, procps
 - **GitHub:** [openclaw/openclaw](https://github.com/openclaw/openclaw)
-- **Docker image:** `ghcr.io/openclaw/openclaw:latest`
 - **Docs:** [docs.openclaw.ai](https://docs.openclaw.ai/)
 
 ## 🖥️ Minimum Hardware Requirements for OpenClaw
@@ -131,13 +112,12 @@ One-click deploy with zero server configuration:
 | Storage | 1 GB | 5 GB+ (grows with conversations and workspace) |
 | Runtime | Node.js 22 | Node.js 22 |
 
-> **Note:** The 2 GB RAM minimum applies to Docker image builds (`pnpm install` will OOM-kill on 1 GB hosts). Runtime usage is lighter — ~512 MB for the gateway + wrapper under normal load.
 
 ## 🐳 Self-Hosting OpenClaw
 
 If you prefer to self-host outside Railway, clone this repo and run with Docker:
 
-```bash
+```
 git clone https://github.com/your-org/openclaw-railway-template.git
 cd openclaw-railway-template
 docker build -t openclaw-railway .
@@ -152,7 +132,7 @@ docker run -d \
 
 Or run OpenClaw directly with the official Docker image:
 
-```bash
+```
 docker run -d \
   --name openclaw \
   -p 18789:18789 \
@@ -184,12 +164,6 @@ OpenClaw shines when you need an always-on autonomous agent accessible from any 
 **What is OpenClaw?**
 OpenClaw is an open-source, self-hosted personal AI assistant that connects 20+ messaging platforms (WhatsApp, Telegram, Discord, etc.) to AI models like Claude, GPT, and Gemini. It runs on your own hardware, keeping all data private.
 
-**What does this Railway template deploy?**
-A single containerized service running an Express wrapper around the OpenClaw gateway. It includes a `/setup` wizard for first-time configuration, an `/admin` dashboard with live logs, terminal, and device pairing, and a reverse proxy to the OpenClaw Control UI. All state persists on a Railway volume at `/data`.
-
-**Why doesn't this template include a separate database?**
-OpenClaw stores all state — config, credentials, conversations, and memory — as local files (JSON and Markdown) on disk. No external database is needed. The Railway volume at `/data` provides persistence across deploys and restarts.
-
 **Can I use my own AI provider or local models?**
 Yes. The setup wizard supports Anthropic, OpenAI, Google Gemini, Groq, and OpenRouter out of the box. For local models, configure Ollama as a custom OpenAI-compatible endpoint. You can also set fallback models in the config.
 
@@ -198,6 +172,3 @@ This template uses token-based auth (`OPENCLAW_GATEWAY_TOKEN`) and optional admi
 
 **How do I update OpenClaw to a newer version?**
 Set the `OPENCLAW_VERSION` build argument in Railway (e.g., `2026.3.13`) and trigger a redeploy. Omit or set to `latest` to always pull the newest release on build.
-
-**Can I use this in production?**
-Yes. The template includes health checks, auto-restart with exponential backoff, atomic config writes, and persistent storage. It's designed for always-on deployment.
