@@ -37,7 +37,14 @@ export const apiRoutes = Router();
 // ── Public endpoints (no auth) — needed for Railway healthcheck ───
 // These must be registered BEFORE the requireAdminAuth middleware.
 
-apiRoutes.get('/status', (req, res) => {
+apiRoutes.get('/status', async (req, res) => {
+  let aiProvider = null;
+  try {
+    const cfg = await config.readConfig();
+    if (cfg?.agents?.defaults?.model?.primary) {
+      aiProvider = cfg.agents.defaults.model.primary;
+    }
+  } catch {}
   res.json({
     state: gatewayManager.getState(),
     running: gatewayManager.isRunning(),
@@ -45,6 +52,7 @@ apiRoutes.get('/status', (req, res) => {
     uptime: process.uptime(),
     terminalSessions: getActiveSessionCount(),
     gatewayToken: OPENCLAW_GATEWAY_TOKEN || null,
+    aiProvider,
     ts: new Date().toISOString(),
   });
 });

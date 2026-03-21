@@ -34,7 +34,7 @@
     background: var(--bg);
     color: var(--text);
     font-family: var(--font-sans);
-    font-size: 14px;
+    font-size: 16px;
     height: 100vh;
     overflow: hidden;
     display: flex;
@@ -574,14 +574,16 @@
             <div class="stat-label">Active Terminal Sessions</div>
             <div class="stat-value" id="st-terms">—</div>
           </div>
+          <div class="stat-card">
+            <div class="stat-label">AI Provider / Model</div>
+            <div class="stat-value" id="st-provider" style="font-size:16px;">—</div>
+          </div>
         </div>
 
         <div class="action-row">
           <button class="btn primary" onclick="gatewayAction('restart')">↺ Restart Gateway</button>
           <button class="btn danger"  onclick="gatewayAction('stop')">■ Stop Gateway</button>
           <button class="btn" onclick="navigate('terminal')">$ Open Terminal</button>
-          <button class="btn" onclick="window.location='/setup'">✎ Reconfigure</button>
-          <a class="btn" href="/" target="_blank" rel="noopener">↗ Open OpenClaw UI</a>
         </div>
 
         <!-- Gateway token display — shown only when OPENCLAW_GATEWAY_TOKEN is set -->
@@ -865,6 +867,7 @@ async function refreshStatus() {
     const upSec = Math.floor(data.uptime || 0);
     document.getElementById('st-uptime').textContent = formatUptime(upSec);
     document.getElementById('st-terms').textContent = data.terminalSessions ?? '—';
+    document.getElementById('st-provider').textContent = data.aiProvider || '—';
 
     // Show gateway token card if token is configured
     const tokenCard = document.getElementById('token-card');
