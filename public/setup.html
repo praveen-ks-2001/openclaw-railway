@@ -156,7 +156,6 @@
   <div class="lobster">&#x1F99E;</div>
   <h1>OpenClaw Setup</h1>
   <p class="subtitle">Configure your personal AI assistant. Select a model provider and optionally add messaging channels.</p>
-  <p style="margin-top:12px"><a href="/admin" style="color:var(--accent);font-family:var(--font-mono);font-size:13px;text-decoration:none;">&rarr; Go to Admin Dashboard</a></p>
 </div>
 
 <div id="error-list"><ul id="error-items"></ul></div>
@@ -309,12 +308,45 @@
   </div>
 </div>
 
+<!-- Channel Pairing (shown after gateway starts if pairing channels configured) -->
+<div class="card" id="pairing-step" style="display:none">
+  <div class="card-title">
+    &#x1F517; Channel Pairing
+    <span class="required-note">approve access</span>
+  </div>
+  <p style="font-size:13px; color:var(--text-dim); margin-bottom:16px; line-height:1.5;">
+    Your channel DM policy is set to <strong>pairing</strong>. Send a message to your bot on the channel, then enter the pairing code shown here to approve access.
+  </p>
+  <div class="field-row">
+    <div class="field">
+      <label for="pairingChannel">Channel</label>
+      <select id="pairingChannel">
+        <option value="">Select channel...</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="pairingCode">Pairing Code</label>
+      <input type="text" id="pairingCode" placeholder="e.g. 3EY4PUYS" style="text-transform:uppercase">
+    </div>
+  </div>
+  <div style="display:flex; gap:12px; align-items:center; margin-top:8px;">
+    <button class="btn-launch" id="btn-approve" onclick="approvePairing()" style="flex:1; padding:10px; font-size:13px;">
+      Approve Pairing
+    </button>
+    <button class="btn-launch" onclick="skipToAdmin()" style="flex:1; padding:10px; font-size:13px; background:var(--surface2); color:var(--text-dim);">
+      Skip &rarr; Admin
+    </button>
+  </div>
+  <div id="pairing-status" style="margin-top:12px; font-family:var(--font-mono); font-size:12px; display:none;"></div>
+</div>
+
 <!-- Launch -->
 <div class="launch-area">
   <button class="btn-launch" id="btn-launch" onclick="launch()">
     &#x1F99E; Launch OpenClaw
   </button>
   <div id="launch-status"></div>
+  <p id="admin-link" style="display:none; margin-top:16px;"><a href="/admin" style="color:var(--accent);font-family:var(--font-mono);font-size:14px;text-decoration:none;font-weight:500;">&rarr; Go to Admin Dashboard</a></p>
 </div>
 
 <script>
@@ -408,6 +440,13 @@ async function launch() {
         btn.disabled = false;
         return;
       }
+      // If already running, show admin link
+      if (res.status === 409) {
+        status.className = 'ok';
+        status.textContent = data.error || 'Gateway is already running.';
+        document.getElementById('admin-link').style.display = 'block';
+        return;
+      }
       throw new Error(data.error || 'Unknown error');
     }
 
@@ -416,21 +455,106 @@ async function launch() {
     await pollUntilRunning();
 
     status.className = 'ok';
-    status.textContent = '\u2713 Gateway is running! Redirecting to admin\u2026';
-    setTimeout(() => { window.location.href = '/admin'; }, 1500);
+    status.textContent = '\u2713 Gateway is running!';
+
+    // Check if any channel has pairing policy — show pairing step
+    if (hasPairingChannels()) {
+      showPairingStep();
+    } else {
+      status.textContent += ' Redirecting to admin\u2026';
+      setTimeout(function() { window.location.href = '/admin'; }, 1500);
+    }
   } catch (err) {
     status.className = 'err';
     status.textContent = '\u2717 ' + err.message;
+    document.getElementById('admin-link').style.display = 'block';
     btn.disabled = false;
   }
+}
+
+function hasPairingChannels() {
+  var channels = [];
+  if (document.getElementById('ch-telegram') && document.getElementById('ch-telegram').checked) {
+    var pol = document.getElementById('telegramDmPolicy').value;
+    if (pol === 'pairing') channels.push('telegram');
+  }
+  if (document.getElementById('ch-discord') && document.getElementById('ch-discord').checked) {
+    var pol2 = document.getElementById('discordDmPolicy').value;
+    if (pol2 === 'pairing') channels.push('discord');
+  }
+  return channels.length > 0;
+}
+
+function showPairingStep() {
+  var sel = document.getElementById('pairingChannel');
+  // Clear existing options except first
+  sel.innerHTML = '<option value="">Select channel...</option>';
+  if (document.getElementById('ch-telegram') && document.getElementById('ch-telegram').checked) {
+    var pol = document.getElementById('telegramDmPolicy').value;
+    if (pol === 'pairing') sel.innerHTML += '<option value="telegram">Telegram</option>';
+  }
+  if (document.getElementById('ch-discord') && document.getElementById('ch-discord').checked) {
+    var pol2 = document.getElementById('discordDmPolicy').value;
+    if (pol2 === 'pairing') sel.innerHTML += '<option value="discord">Discord</option>';
+  }
+  // Auto-select if only one option
+  if (sel.options.length === 2) sel.selectedIndex = 1;
+
+  document.getElementById('pairing-step').style.display = 'block';
+  document.getElementById('pairingCode').focus();
+}
+
+async function approvePairing() {
+  var channel = document.getElementById('pairingChannel').value;
+  var code = document.getElementById('pairingCode').value.trim();
+  var statusEl = document.getElementById('pairing-status');
+
+  if (!channel) { alert('Please select a channel'); return; }
+  if (!code) { alert('Please enter the pairing code'); return; }
+
+  var btn = document.getElementById('btn-approve');
+  btn.disabled = true;
+  btn.textContent = 'Approving\u2026';
+  statusEl.style.display = 'block';
+  statusEl.style.color = 'var(--text-dim)';
+  statusEl.innerHTML = '<span class="spinner"></span> Approving pairing for ' + escHtml(channel) + '\u2026';
+
+  try {
+    var res = await fetch('/setup/pairing/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ channel: channel, code: code }),
+    });
+    var data = await res.json();
+    if (data.ok) {
+      statusEl.style.color = 'var(--green)';
+      statusEl.textContent = '\u2713 ' + (data.message || 'Pairing approved!');
+      setTimeout(function() { window.location.href = '/admin'; }, 1500);
+    } else {
+      statusEl.style.color = 'var(--red)';
+      statusEl.textContent = '\u2717 ' + (data.error || 'Failed to approve pairing');
+      btn.disabled = false;
+      btn.textContent = 'Approve Pairing';
+    }
+  } catch (err) {
+    statusEl.style.color = 'var(--red)';
+    statusEl.textContent = '\u2717 ' + err.message;
+    btn.disabled = false;
+    btn.textContent = 'Approve Pairing';
+  }
+}
+
+function skipToAdmin() {
+  window.location.href = '/admin';
 }
 
 async function pollUntilRunning(attempts) {
   attempts = attempts || 0;
   if (attempts > 60) throw new Error('Gateway did not start within 60 seconds');
-  const res = await fetch('/api/status').catch(function() { return null; });
+  var res = await fetch('/api/status').catch(function() { return null; });
   if (res && res.ok) {
-    const data = await res.json().catch(function() { return {}; });
+    var data = await res.json().catch(function() { return {}; });
     if (data.state === 'running') return;
     if (data.state === 'crashed') throw new Error('Gateway crashed during startup. Check logs at /admin.');
   }
@@ -440,7 +564,23 @@ async function pollUntilRunning(attempts) {
 
 function escHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 }
+
+// ── On load: check if already running ────────────────────────────
+(async function checkAlreadyRunning() {
+  try {
+    var res = await fetch('/api/status');
+    if (res.ok) {
+      var data = await res.json();
+      if (data.state === 'running') {
+        document.getElementById('btn-launch').textContent = '\u2713 OpenClaw is already running';
+        document.getElementById('btn-launch').disabled = true;
+        document.getElementById('admin-link').style.display = 'block';
+      }
+    }
+  } catch {}
+})();
 </script>
 </body>
 </html>
