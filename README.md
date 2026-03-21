@@ -195,33 +195,3 @@ Set the `OPENCLAW_VERSION` build argument in Railway (e.g., `2026.3.13`) and tri
 
 **Can I use this in production?**
 Yes. The template includes health checks, auto-restart with exponential backoff, atomic config writes, and persistent storage. It's designed for always-on deployment.
-
----
-
-## Template Metadata
-
-### Titles
-1. Deploy OpenClaw on Railway — Personal AI Assistant
-2. Self-Host OpenClaw with One-Click Railway Deploy
-3. Run OpenClaw — Open Source AI Agent for WhatsApp, Telegram & More
-4. Launch Your Own OpenClaw AI Assistant on Railway
-5. OpenClaw — Open Source Cursor Alternative, Self-Hosted
-
-### Descriptions
-1. Self-host OpenClaw AI assistant on Railway with one click (57 chars)
-2. Deploy OpenClaw: AI agent for WhatsApp, Telegram, Discord (58 chars)
-3. Open-source AI assistant — multi-chat, autonomous, private (59 chars)
-4. One-click OpenClaw deploy with setup wizard and admin panel (59 chars)
-5. AI coding agent, 20+ chat platforms, self-hosted on Railway (59 chars)
-
-### Slugs
-1. openclaw
-2. self-host-openclaw
-3. openclaw-ai-assistant
-4. openclaw-railway-template
-5. deploy-openclaw
-
-### Service Logo
-URL: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/svg/openclaw.svg
-Format: svg
-Source: Dashboard Icons (jsdelivr CDN)
