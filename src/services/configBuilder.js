@@ -41,6 +41,11 @@ export function buildOpenclaWConfig(formData) {
     cfg.channels = channels;
   }
 
+  // ── Ollama provider config (only when provider = ollama) ──────
+  if (formData.provider === 'ollama' && formData.ollamaUrl) {
+    cfg.models = buildOllamaSection(formData);
+  }
+
   // ── Gateway ────────────────────────────────────────────────────
   cfg.gateway = buildGatewaySection(formData);
 
@@ -60,6 +65,7 @@ export function buildOpenclaWConfig(formData) {
 /**
  * Provider → env var mapping.
  * The setup form sends a single provider + apiKey pair.
+ * Ollama has no API key so it has no entry here.
  */
 const PROVIDER_ENV_MAP = {
   anthropic:   'ANTHROPIC_API_KEY',
@@ -67,6 +73,9 @@ const PROVIDER_ENV_MAP = {
   google:      'GOOGLE_API_KEY',
   openrouter:  'OPENROUTER_API_KEY',
   groq:        'GROQ_API_KEY',
+  moonshot:    'MOONSHOT_API_KEY',
+  zai:         'ZAI_API_KEY',
+  minimax:     'MINIMAX_API_KEY',
 };
 
 /**
@@ -92,10 +101,15 @@ const PROVIDER_DEFAULT_MODEL = {
   google:     'google/gemini-2.5-pro',
   openrouter: 'openrouter/auto',
   groq:       'groq/llama-3.3-70b-versatile',
+  moonshot:   'moonshot/kimi-k2.5',
+  zai:        'zai/glm-4.5',
+  minimax:    'minimax/minimax-m2.1',
+  // ollama: no default — user must specify their pulled model
 };
 
 function buildAgentsSection(formData) {
-  const model = formData.model || PROVIDER_DEFAULT_MODEL[formData.provider] || 'anthropic/claude-opus-4-6';
+  // For Ollama the user must provide the model (validated before we get here)
+  const model = formData.model || PROVIDER_DEFAULT_MODEL[formData.provider];
   const workspace = '/data/.openclaw/workspace';
 
   return {
@@ -199,6 +213,18 @@ function buildSessionSection(formData) {
             : {}),
         }
       : undefined,
+  };
+}
+
+function buildOllamaSection(formData) {
+  return {
+    providers: {
+      ollama: {
+        baseUrl: formData.ollamaUrl,
+        apiKey: 'ollama-local',
+        api: 'ollama',
+      },
+    },
   };
 }
 

@@ -9,19 +9,36 @@ export function validateSetupForm(body) {
   const errors = [];
   const data = {};
 
-  // ── Provider + API key ────────────────────────────────────────
+  // ── Provider + API key / Ollama URL ──────────────────────────
   data.provider = (body.provider || '').trim();
-  data.apiKey = (body.apiKey || '').trim();
+  data.apiKey   = (body.apiKey   || '').trim();
+  data.ollamaUrl = (body.ollamaUrl || '').trim();
+
+  const VALID_PROVIDERS = ['anthropic', 'openai', 'google', 'openrouter', 'groq', 'moonshot', 'zai', 'minimax', 'ollama'];
 
   if (!data.provider) {
     errors.push('Please select a model provider.');
+  } else if (!VALID_PROVIDERS.includes(data.provider)) {
+    errors.push('Invalid provider selected.');
   }
-  if (!data.apiKey) {
+
+  if (data.provider === 'ollama') {
+    if (!data.ollamaUrl) {
+      errors.push('Ollama base URL is required (e.g. http://localhost:11434).');
+    } else if (!/^https?:\/\/.+/.test(data.ollamaUrl)) {
+      errors.push('Ollama base URL must start with http:// or https://');
+    }
+  } else if (!data.apiKey) {
     errors.push('API key is required.');
   }
 
-  // ── Model selection (optional — defaults applied in configBuilder) ──
+  // ── Model selection ───────────────────────────────────────────
   data.model = (body.model || '').trim() || undefined;
+
+  // Ollama requires a model (no sensible default since it depends on what's pulled)
+  if (data.provider === 'ollama' && !data.model) {
+    errors.push('Model is required for Ollama (e.g. ollama/llama3.3).');
+  }
 
   // ── Channels ────────────────────────────────────────────────────
 
