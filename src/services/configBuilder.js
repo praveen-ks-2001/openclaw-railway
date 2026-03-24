@@ -41,9 +41,11 @@ export function buildOpenclaWConfig(formData) {
     cfg.channels = channels;
   }
 
-  // ── Ollama provider config (only when provider = ollama) ──────
+  // ── Custom provider configs (providers that need explicit models.providers entries) ──
   if (formData.provider === 'ollama' && formData.ollamaUrl) {
     cfg.models = buildOllamaSection(formData);
+  } else if (formData.provider === 'minimax') {
+    cfg.models = buildMinimaxSection();
   }
 
   // ── Gateway ────────────────────────────────────────────────────
@@ -70,7 +72,7 @@ export function buildOpenclaWConfig(formData) {
 const PROVIDER_ENV_MAP = {
   anthropic:   'ANTHROPIC_API_KEY',
   openai:      'OPENAI_API_KEY',
-  google:      'GOOGLE_API_KEY',
+  google:      'GEMINI_API_KEY',
   openrouter:  'OPENROUTER_API_KEY',
   groq:        'GROQ_API_KEY',
   moonshot:    'MOONSHOT_API_KEY',
@@ -103,7 +105,7 @@ const PROVIDER_DEFAULT_MODEL = {
   groq:       'groq/llama-3.3-70b-versatile',
   moonshot:   'moonshot/kimi-k2.5',
   zai:        'zai/glm-4.5',
-  minimax:    'minimax/minimax-m2.1',
+  minimax:    'minimax/MiniMax-M2.7',
   // ollama: no default — user must specify their pulled model
 };
 
@@ -213,6 +215,18 @@ function buildSessionSection(formData) {
             : {}),
         }
       : undefined,
+  };
+}
+
+function buildMinimaxSection() {
+  return {
+    providers: {
+      minimax: {
+        baseUrl: 'https://api.minimax.io/anthropic',
+        api: 'anthropic-messages',
+        apiKey: '${MINIMAX_API_KEY}',
+      },
+    },
   };
 }
 
