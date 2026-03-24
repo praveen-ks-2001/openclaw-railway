@@ -7,7 +7,10 @@
       "WebFetch(domain:docs.openclaw.ai)",
       "Bash(node --check src/routes/setup.js)",
       "Bash(node --check src/services/gatewayManager.js)",
-      "Bash(node --check src/services/configBuilder.js)"
+      "Bash(node --check src/services/configBuilder.js)",
+      "WebFetch(domain:fossies.org)",
+      "WebFetch(domain:openclawlab.com)",
+      "WebFetch(domain:docs.z.ai)"
     ]
   }
 }

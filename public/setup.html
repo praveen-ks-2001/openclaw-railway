@@ -176,17 +176,27 @@
       <option value="google">Google</option>
       <option value="openrouter">OpenRouter</option>
       <option value="groq">Groq</option>
+      <option value="moonshot">Moonshot AI (Kimi)</option>
+      <option value="zai">Z.AI (GLM)</option>
+      <option value="minimax">MiniMax</option>
+      <option value="ollama">Ollama (local models)</option>
     </select>
   </div>
 
   <div class="field">
-    <label for="model">Model <span class="hint">optional — defaults to best for provider</span> <span class="hint" id="model-hint"></span></label>
+    <label for="model">Model <span class="hint" id="model-optional-hint">optional</span> <span class="hint" id="model-hint"></span></label>
     <input type="text" id="model" name="model" placeholder="Leave blank for default">
   </div>
 
-  <div class="field">
+  <div class="field" id="field-apiKey">
     <label for="apiKey"><span id="apikey-label">API Key</span> <span class="req">*</span></label>
     <input type="password" id="apiKey" name="apiKey" placeholder="Paste your API key" autocomplete="off">
+  </div>
+
+  <div class="field" id="field-ollamaUrl" style="display:none">
+    <label for="ollamaUrl">Ollama Base URL <span class="req">*</span></label>
+    <input type="text" id="ollamaUrl" name="ollamaUrl" placeholder="http://localhost:11434" autocomplete="off">
+    <div class="hint" style="margin-top:4px">Do not add /v1 — openclaw uses the native Ollama API</div>
   </div>
 </div>
 
@@ -352,21 +362,43 @@
 <script>
 // ── Provider defaults ─────────────────────────────────────────────
 const providerDefaults = {
-  anthropic:  { model: 'anthropic/claude-opus-4-6',      hint: 'sk-ant-...', label: 'Anthropic API Key' },
+  anthropic:  { model: 'anthropic/claude-opus-4-6',     hint: 'sk-ant-...', label: 'Anthropic API Key' },
   openai:     { model: 'openai/gpt-5.4',                hint: 'sk-...',     label: 'OpenAI API Key' },
-  google:     { model: 'google/gemini-2.5-pro',          hint: 'AIza...',    label: 'Google API Key' },
-  openrouter: { model: 'openrouter/auto',                hint: 'sk-or-...',  label: 'OpenRouter API Key' },
-  groq:       { model: 'groq/llama-3.3-70b-versatile',   hint: 'gsk_...',    label: 'Groq API Key' },
+  google:     { model: 'google/gemini-2.5-pro',         hint: 'AIza...',    label: 'Google API Key' },
+  openrouter: { model: 'openrouter/auto',               hint: 'sk-or-...',  label: 'OpenRouter API Key' },
+  groq:       { model: 'groq/llama-3.3-70b-versatile',  hint: 'gsk_...',    label: 'Groq API Key' },
+  moonshot:   { model: 'moonshot/kimi-k2.5',            hint: 'sk-...',     label: 'Moonshot API Key' },
+  zai:        { model: 'zai/glm-4.5',                   hint: 'your-key',   label: 'Z.AI API Key' },
+  minimax:    { model: 'minimax/MiniMax-M2.7',            hint: 'your-key',   label: 'MiniMax API Key' },
+  ollama:     { model: null,                             hint: null,         label: null },
 };
 
 function onProviderChange() {
-  const sel = document.getElementById('provider');
-  const def = providerDefaults[sel.value];
-  if (def) {
-    document.getElementById('model').placeholder = 'Default: ' + def.model;
-    document.getElementById('model-hint').textContent = 'default: ' + def.model;
+  const sel      = document.getElementById('provider');
+  const provider = sel.value;
+  const def      = providerDefaults[provider];
+
+  const isOllama = provider === 'ollama';
+
+  // Toggle API key vs Ollama URL field
+  document.getElementById('field-apiKey').style.display    = isOllama ? 'none' : '';
+  document.getElementById('field-ollamaUrl').style.display = isOllama ? '' : 'none';
+
+  if (isOllama) {
+    document.getElementById('model').placeholder = 'e.g. ollama/llama3.3 or ollama/qwen2.5-coder:32b';
+    document.getElementById('model-hint').textContent = '';
+    document.getElementById('model-optional-hint').textContent = 'required — enter the model you have pulled';
+    document.getElementById('ollamaUrl').placeholder = 'http://localhost:11434';
+  } else if (def) {
+    document.getElementById('model').placeholder = def.model ? 'Leave blank to use ' + def.model : 'provider/model-name';
+    document.getElementById('model-hint').textContent = def.model ? '— if blank, ' + def.model + ' will be used' : '';
+    document.getElementById('model-optional-hint').textContent = 'optional';
     document.getElementById('apikey-label').textContent = def.label;
     document.getElementById('apiKey').placeholder = def.hint;
+  } else {
+    document.getElementById('model').placeholder = 'Leave blank for default';
+    document.getElementById('model-hint').textContent = '';
+    document.getElementById('model-optional-hint').textContent = 'optional';
   }
 }
 
