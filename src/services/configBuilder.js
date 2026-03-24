@@ -217,12 +217,29 @@ function buildSessionSection(formData) {
 }
 
 function buildOllamaSection(formData) {
+  // Extract the bare model ID from "ollama/deepseek-r1:1.5b" → "deepseek-r1:1.5b"
+  const rawModel = formData.model || '';
+  const modelId = rawModel.startsWith('ollama/') ? rawModel.slice(7) : rawModel;
+
   return {
     providers: {
       ollama: {
         baseUrl: formData.ollamaUrl,
         apiKey: 'ollama-local',
         api: 'ollama',
+        // When explicitly defining the provider, the models array is required
+        // (auto-discovery is skipped for explicit configs)
+        models: [
+          {
+            id: modelId,
+            name: modelId,
+            reasoning: false,
+            input: ['text'],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 32768,
+            maxTokens: 8192,
+          },
+        ],
       },
     },
   };
