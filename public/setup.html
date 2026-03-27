@@ -183,7 +183,7 @@
     </select>
   </div>
 
-  <div class="field">
+  <div class="field" id="field-model-wrap">
     <label for="model">Model <span class="hint" id="model-optional-hint">optional</span> <span class="hint" id="model-hint"></span></label>
     <input type="text" id="model" name="model" placeholder="Leave blank for default">
   </div>
@@ -195,8 +195,26 @@
 
   <div class="field" id="field-ollamaUrl" style="display:none">
     <label for="ollamaUrl">Ollama Base URL <span class="req">*</span></label>
-    <input type="text" id="ollamaUrl" name="ollamaUrl" placeholder="http://localhost:11434" autocomplete="off">
+    <input type="text" id="ollamaUrl" name="ollamaUrl" placeholder="http://localhost:11434" autocomplete="off" oninput="onOllamaUrlInput()">
     <div class="hint" style="margin-top:4px">Do not add /v1 — openclaw uses the native Ollama API</div>
+    <div id="ollama-env-hint" style="display:none; color:#f0883e; font-size:12px; margin-top:4px">
+      Auto-filled from OLLAMA_BASE_URL environment variable — you can edit this
+    </div>
+  </div>
+
+  <div class="field" id="field-ollama-model" style="display:none">
+    <label>Model <span class="req">*</span></label>
+    <div style="display:flex; gap:8px; align-items:center">
+      <select id="ollamaModel" name="ollamaModel" style="flex:1" onchange="syncOllamaModel()">
+        <option value="">-- Enter URL above then click Refresh --</option>
+      </select>
+      <button type="button" id="btn-ollama-refresh" onclick="fetchOllamaModels()" style="white-space:nowrap">Refresh</button>
+    </div>
+    <div id="ollama-model-status" class="hint" style="margin-top:4px"></div>
+    <div class="hint" style="margin-top:6px">
+      Model must support <strong>tool calling</strong> — not all models do.
+      Browse at <a href="https://ollama.com/library" target="_blank" rel="noopener">ollama.com/library</a>
+    </div>
   </div>
 </div>
 
@@ -381,14 +399,16 @@ function onProviderChange() {
   const isOllama = provider === 'ollama';
 
   // Toggle API key vs Ollama URL field
-  document.getElementById('field-apiKey').style.display    = isOllama ? 'none' : '';
-  document.getElementById('field-ollamaUrl').style.display = isOllama ? '' : 'none';
+  document.getElementById('field-apiKey').style.display       = isOllama ? 'none' : '';
+  document.getElementById('field-ollamaUrl').style.display    = isOllama ? '' : 'none';
+  // Toggle regular model input vs Ollama model dropdown
+  document.getElementById('field-model-wrap').style.display   = isOllama ? 'none' : '';
+  document.getElementById('field-ollama-model').style.display = isOllama ? '' : 'none';
 
   if (isOllama) {
-    document.getElementById('model').placeholder = 'e.g. ollama/llama3.3 or ollama/qwen2.5-coder:32b';
-    document.getElementById('model-hint').textContent = '';
-    document.getElementById('model-optional-hint').textContent = 'required — enter the model you have pulled';
     document.getElementById('ollamaUrl').placeholder = 'http://localhost:11434';
+    // Auto-fetch models as soon as Ollama is selected (URL may already be pre-filled)
+    fetchOllamaModels();
   } else if (def) {
     document.getElementById('model').placeholder = def.model ? 'Leave blank to use ' + def.model : 'provider/model-name';
     document.getElementById('model-hint').textContent = def.model ? '— if blank, ' + def.model + ' will be used' : '';
@@ -401,6 +421,82 @@ function onProviderChange() {
     document.getElementById('model-optional-hint').textContent = 'optional';
   }
 }
+
+// ── Ollama helpers ────────────────────────────────────────────────
+
+// Sync selected dropdown value → hidden model input so validation.js is unchanged
+function syncOllamaModel() {
+  document.getElementById('model').value = document.getElementById('ollamaModel').value;
+}
+
+// Reset the refresh hint when URL is manually edited
+function onOllamaUrlInput() {
+  document.getElementById('ollama-env-hint').style.display = 'none';
+  document.getElementById('ollama-model-status').textContent = '';
+}
+
+// Fetch model list from Ollama, populate dropdown
+async function fetchOllamaModels() {
+  const url    = (document.getElementById('ollamaUrl').value || '').trim();
+  const status = document.getElementById('ollama-model-status');
+  const select = document.getElementById('ollamaModel');
+  const btn    = document.getElementById('btn-ollama-refresh');
+
+  if (!url) {
+    status.textContent = 'Enter the Ollama URL first.';
+    return;
+  }
+
+  btn.disabled = true;
+  status.textContent = 'Fetching models\u2026';
+  select.innerHTML = '<option value="">Loading\u2026</option>';
+
+  try {
+    const res  = await fetch('/setup/api/ollama-models?url=' + encodeURIComponent(url));
+    const data = await res.json();
+
+    if (!res.ok || data.error) {
+      status.textContent = '\u26A0 ' + (data.error || 'Unknown error');
+      select.innerHTML = '<option value="">-- Could not fetch models --</option>';
+      document.getElementById('model').value = '';
+      return;
+    }
+
+    if (!data.models.length) {
+      status.textContent = 'No models found — pull a model with: ollama pull <name>';
+      select.innerHTML = '<option value="">-- No models pulled --</option>';
+      document.getElementById('model').value = '';
+      return;
+    }
+
+    select.innerHTML = data.models
+      .map(m => `<option value="ollama/${m}">ollama/${m}</option>`)
+      .join('');
+    // Sync first option into model input
+    document.getElementById('model').value = select.value;
+    status.textContent = data.models.length + ' model(s) found';
+  } catch (err) {
+    status.textContent = '\u26A0 ' + err.message;
+    select.innerHTML = '<option value="">-- Could not fetch models --</option>';
+    document.getElementById('model').value = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// On page load: check server for OLLAMA_BASE_URL env var and pre-fill if set
+async function initOllamaConfig() {
+  try {
+    const res  = await fetch('/setup/api/ollama-config');
+    const data = await res.json();
+    if (data.ollamaBaseUrl) {
+      document.getElementById('ollamaUrl').value = data.ollamaBaseUrl;
+      document.getElementById('ollama-env-hint').style.display = '';
+    }
+  } catch { /* silently ignore — not critical */ }
+}
+
+initOllamaConfig();
 
 // ── Channel toggles ───────────────────────────────────────────────
 function toggleChannel(name, event) {
