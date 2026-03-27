@@ -13,7 +13,7 @@ import fs from 'fs/promises';
 import { createReadStream } from 'fs';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { config, DATA_DIR, OPENCLAW_HOME, OPENCLAW_GATEWAY_TOKEN, WRAPPER_ADMIN_PASSWORD } from '../config/index.js';
+import { config, DATA_DIR, OPENCLAW_HOME, OPENCLAW_GATEWAY_TOKEN, WRAPPER_ADMIN_PASSWORD, OLLAMA_BASE_URL } from '../config/index.js';
 import { gatewayManager } from '../services/gatewayManager.js';
 import { buildOpenclaWConfig, buildEnvVars } from '../services/configBuilder.js';
 import { validateSetupForm } from '../utils/validation.js';
@@ -43,6 +43,47 @@ setupRoutes.get('/', async (req, res) => {
 });
 
 // ── POST /setup/save — write config and launch ─────────────────────
+
+// ── GET /setup/api/ollama-config — return OLLAMA_BASE_URL env var ──
+// Used by the setup page to pre-fill the Ollama URL field on load.
+
+setupRoutes.get('/api/ollama-config', (req, res) => {
+  res.json({ ollamaBaseUrl: OLLAMA_BASE_URL || null });
+});
+
+// ── GET /setup/api/ollama-models — fetch model list from Ollama ────
+// Proxies to {url}/api/tags and returns the list of pulled model names.
+// Query param: url (the Ollama base URL entered by the user).
+
+setupRoutes.get('/api/ollama-models', async (req, res) => {
+  const baseUrl = (req.query.url || OLLAMA_BASE_URL || '').trim().replace(/\/$/, '');
+  if (!baseUrl) {
+    return res.status(400).json({ error: 'No Ollama URL provided' });
+  }
+  if (!/^https?:\/\/.+/.test(baseUrl)) {
+    return res.status(400).json({ error: 'URL must start with http:// or https://' });
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const r = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
+    clearTimeout(timeout);
+    if (!r.ok) {
+      return res.status(502).json({ error: `Ollama returned HTTP ${r.status}` });
+    }
+    const json = await r.json();
+    const models = (json.models || []).map((m) => m.name);
+    res.json({ models });
+  } catch (err) {
+    const msg = err.name === 'AbortError'
+      ? 'Request timed out — is the Ollama URL correct and reachable?'
+      : `Could not reach Ollama: ${err.message}`;
+    res.status(502).json({ error: msg });
+  }
+});
+
+// ── POST /setup/save — write config + launch gateway ───────────────
 
 setupRoutes.post('/save', async (req, res) => {
   if (gatewayManager.isRunning() || gatewayManager.getState() === 'starting') {
