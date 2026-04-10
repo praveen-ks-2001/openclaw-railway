@@ -9,12 +9,21 @@ export function validateSetupForm(body) {
   const errors = [];
   const data = {};
 
-  // ── Provider + API key / Ollama URL ──────────────────────────
+  // ── Provider ──────────────────────────────────────────────────
   data.provider = (body.provider || '').trim();
-  data.apiKey   = (body.apiKey   || '').trim();
-  data.ollamaUrl = (body.ollamaUrl || '').trim();
 
-  const VALID_PROVIDERS = ['anthropic', 'openai', 'google', 'openrouter', 'groq', 'moonshot', 'zai', 'minimax', 'ollama'];
+  const VALID_PROVIDERS = [
+    // Major AI labs
+    'anthropic', 'openai', 'google', 'deepseek', 'xai', 'mistral',
+    // Multi-model gateways
+    'openrouter', 'together', 'litellm', 'aigateway', 'synthetic', 'cloudflare',
+    // Specialized / other
+    'groq', 'huggingface', 'venice', 'chutes', 'kilocode', 'opencode',
+    // Asia / regional
+    'moonshot', 'zai', 'minimax', 'modelstudio', 'volcengine', 'qianfan', 'xiaomi', 'byteplus',
+    // Self-hosted / local
+    'ollama', 'vllm', 'sglang', 'custom',
+  ];
 
   if (!data.provider) {
     errors.push('Please select a model provider.');
@@ -22,20 +31,48 @@ export function validateSetupForm(body) {
     errors.push('Invalid provider selected.');
   }
 
+  // ── API key ───────────────────────────────────────────────────
+  data.apiKey = (body.apiKey || '').trim();
+  const NO_API_KEY_PROVIDERS = ['ollama', 'vllm', 'sglang'];
+  if (!NO_API_KEY_PROVIDERS.includes(data.provider) && !data.apiKey) {
+    errors.push('API key is required.');
+  }
+
+  // ── Ollama URL ────────────────────────────────────────────────
+  data.ollamaUrl = (body.ollamaUrl || '').trim();
   if (data.provider === 'ollama') {
     if (!data.ollamaUrl) {
       errors.push('Ollama base URL is required (e.g. http://localhost:11434).');
     } else if (!/^https?:\/\/.+/.test(data.ollamaUrl)) {
       errors.push('Ollama base URL must start with http:// or https://');
     }
-  } else if (!data.apiKey) {
-    errors.push('API key is required.');
   }
+
+  // ── Custom / vLLM / SGLang base URL ──────────────────────────
+  data.customUrl = (body.customUrl || '').trim();
+  if (['vllm', 'sglang', 'custom'].includes(data.provider)) {
+    if (!data.customUrl) {
+      errors.push('Base URL is required for ' + data.provider.toUpperCase() + '.');
+    } else if (!/^https?:\/\/.+/.test(data.customUrl)) {
+      errors.push('Base URL must start with http:// or https://');
+    }
+  }
+
+  // ── Cloudflare AI Gateway extra fields ────────────────────────
+  data.cloudflareAccountId = (body.cloudflareAccountId || '').trim();
+  data.cloudflareGatewayId = (body.cloudflareGatewayId || '').trim();
+  if (data.provider === 'cloudflare') {
+    if (!data.cloudflareAccountId) errors.push('Cloudflare Account ID is required.');
+    if (!data.cloudflareGatewayId) errors.push('Cloudflare Gateway ID is required.');
+  }
+
+  // ── Custom compatibility ──────────────────────────────────────
+  data.customCompatibility = oneOf(body.customCompatibility, ['openai', 'anthropic', ''], '');
 
   // ── Model selection ───────────────────────────────────────────
   data.model = (body.model || '').trim() || undefined;
 
-  // Ollama requires a model (no sensible default since it depends on what's pulled)
+  // Ollama requires a model (no default — depends on what's pulled locally)
   if (data.provider === 'ollama' && !data.model) {
     errors.push('Model is required for Ollama (e.g. ollama/llama3.3).');
   }

@@ -128,7 +128,9 @@ ${req.query.err ? '<p class="err">Incorrect password</p>' : ''}
 <label>Admin Password</label>
 <input type="password" name="password" autofocus placeholder="Enter password">
 <button type="submit">Sign In</button>
-</form></div></body></html>`);
+</form>
+<p style="margin-top:16px;font-size:11px;color:#6b7688;text-align:center;line-height:1.6">This is the <span style="color:#f0883e">WRAPPER_ADMIN_PASSWORD</span> environment variable set in your Railway service variables.</p>
+</div></body></html>`);
   });
 
   app.post('/login', express.urlencoded({ extended: false }), (req, res) => {

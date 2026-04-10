@@ -35,7 +35,7 @@ This is a Railway deployment wrapper for **OpenClaw** (open-source AI coding ass
 - `src/services/gatewayManager.js` — Gateway lifecycle, WS/HTTP proxy, auto-restart with backoff
 - `src/services/terminalService.js` — PTY sessions over WebSocket (noServer mode), spawns `openclaw tui`
 - `src/services/pairingService.js` — Device management via `openclaw devices` CLI
-- `src/services/configBuilder.js` — Builds openclaw.json from setup form data
+- `src/services/onboardBuilder.js` — Delegates config to `openclaw onboard` CLI + post-onboard `config set` helpers
 - `src/config/index.js` — All paths and constants
 - `src/utils/validation.js` — Setup form validation
 - `src/utils/fs.js` — Data directory initialization, atomic file writes

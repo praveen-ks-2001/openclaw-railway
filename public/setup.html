@@ -206,15 +206,46 @@
     <label for="provider">Provider <span class="req">*</span></label>
     <select id="provider" name="provider" onchange="onProviderChange()">
       <option value="">-- Select provider --</option>
-      <option value="anthropic">Anthropic</option>
-      <option value="openai">OpenAI</option>
-      <option value="google">Google</option>
-      <option value="openrouter">OpenRouter</option>
-      <option value="groq">Groq</option>
-      <option value="moonshot">Moonshot AI (Kimi)</option>
-      <option value="zai">Z.AI (GLM)</option>
-      <option value="minimax">MiniMax</option>
-      <option value="ollama">Ollama (local models)</option>
+      <optgroup label="Major AI Labs">
+        <option value="anthropic">Anthropic (Claude)</option>
+        <option value="openai">OpenAI (GPT)</option>
+        <option value="google">Google (Gemini)</option>
+        <option value="deepseek">DeepSeek</option>
+        <option value="xai">xAI (Grok)</option>
+        <option value="mistral">Mistral AI</option>
+      </optgroup>
+      <optgroup label="Multi-Model Gateways">
+        <option value="openrouter">OpenRouter</option>
+        <option value="together">Together AI</option>
+        <option value="litellm">LiteLLM</option>
+        <option value="aigateway">Vercel AI Gateway</option>
+        <option value="cloudflare">Cloudflare AI Gateway</option>
+        <option value="synthetic">Synthetic</option>
+      </optgroup>
+      <optgroup label="Specialized / Other">
+        <option value="groq">Groq</option>
+        <option value="huggingface">Hugging Face</option>
+        <option value="venice">Venice AI</option>
+        <option value="chutes">Chutes</option>
+        <option value="kilocode">Kilocode</option>
+        <option value="opencode">OpenCode Zen</option>
+      </optgroup>
+      <optgroup label="Asia / Regional">
+        <option value="moonshot">Moonshot AI (Kimi)</option>
+        <option value="zai">Z.AI (GLM)</option>
+        <option value="minimax">MiniMax</option>
+        <option value="modelstudio">Alibaba ModelStudio (Qwen)</option>
+        <option value="volcengine">Volcano Engine (Doubao)</option>
+        <option value="qianfan">Qianfan (Baidu)</option>
+        <option value="xiaomi">Xiaomi AI</option>
+        <option value="byteplus">BytePlus</option>
+      </optgroup>
+      <optgroup label="Self-Hosted / Local">
+        <option value="ollama">Ollama (local models)</option>
+        <option value="vllm">vLLM</option>
+        <option value="sglang">SGLang</option>
+        <option value="custom">Custom endpoint</option>
+      </optgroup>
     </select>
   </div>
 
@@ -250,6 +281,38 @@
       Model must support tool calling — not all models do.
       Browse at <a href="https://ollama.com/library" target="_blank" rel="noopener">ollama.com/library</a>
     </div>
+  </div>
+
+  <!-- vLLM / SGLang / Custom: base URL -->
+  <div class="field" id="field-customUrl" style="display:none">
+    <label for="customUrl">Base URL <span class="req">*</span></label>
+    <input type="text" id="customUrl" name="customUrl" placeholder="http://localhost:8000" autocomplete="off">
+    <div class="field-hint" id="custom-url-hint"></div>
+  </div>
+
+  <!-- Cloudflare AI Gateway: extra IDs -->
+  <div class="field" id="field-cloudflareIds" style="display:none">
+    <div class="field-row">
+      <div class="field">
+        <label for="cloudflareAccountId">Account ID <span class="req">*</span></label>
+        <input type="text" id="cloudflareAccountId" name="cloudflareAccountId" placeholder="abc123..." autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="cloudflareGatewayId">Gateway ID <span class="req">*</span></label>
+        <input type="text" id="cloudflareGatewayId" name="cloudflareGatewayId" placeholder="my-gateway" autocomplete="off">
+      </div>
+    </div>
+    <div class="field-hint">Find these in your Cloudflare dashboard under AI → AI Gateway</div>
+  </div>
+
+  <!-- Custom endpoint: API compatibility -->
+  <div class="field" id="field-customCompat" style="display:none">
+    <label for="customCompatibility">API Compatibility</label>
+    <select id="customCompatibility" name="customCompatibility">
+      <option value="">Auto-detect</option>
+      <option value="openai">OpenAI-compatible</option>
+      <option value="anthropic">Anthropic-compatible</option>
+    </select>
   </div>
 </div>
 
@@ -413,45 +476,103 @@
 </div>
 
 <script>
-// ── Provider defaults ─────────────────────────────────────────────
+// ── Provider metadata ─────────────────────────────────────────────
+// model: default model shown as placeholder hint (null = no suggestion)
+// hint:  API key placeholder text
+// label: API key label text
+// urlHint: shown below base URL field for self-hosted providers
 const providerDefaults = {
-  anthropic:  { model: 'anthropic/claude-opus-4-6',     hint: 'sk-ant-...', label: 'Anthropic API Key' },
-  openai:     { model: 'openai/gpt-5.4',                hint: 'sk-...',     label: 'OpenAI API Key' },
-  google:     { model: 'google/gemini-2.5-pro',         hint: 'AIza...',    label: 'Google API Key' },
-  openrouter: { model: 'openrouter/auto',               hint: 'sk-or-...',  label: 'OpenRouter API Key' },
-  groq:       { model: 'groq/llama-3.3-70b-versatile',  hint: 'gsk_...',    label: 'Groq API Key' },
-  moonshot:   { model: 'moonshot/kimi-k2.5',            hint: 'sk-...',     label: 'Moonshot API Key' },
-  zai:        { model: 'zai/glm-4.5',                   hint: 'your-key',   label: 'Z.AI API Key' },
-  minimax:    { model: 'minimax/MiniMax-M2.7',            hint: 'your-key',   label: 'MiniMax API Key' },
-  ollama:     { model: null,                             hint: null,         label: null },
+  // Major AI labs
+  anthropic:   { model: 'anthropic/claude-opus-4-6',      hint: 'sk-ant-...',  label: 'Anthropic API Key' },
+  openai:      { model: 'openai/gpt-5.4',                 hint: 'sk-...',      label: 'OpenAI API Key' },
+  google:      { model: 'google/gemini-2.5-pro',          hint: 'AIza...',     label: 'Google API Key' },
+  deepseek:    { model: 'deepseek/deepseek-chat',         hint: 'sk-...',      label: 'DeepSeek API Key' },
+  xai:         { model: 'xai/grok-4',                     hint: 'xai-...',     label: 'xAI API Key' },
+  mistral:     { model: 'mistral/mistral-large-latest',   hint: 'your-key',    label: 'Mistral API Key' },
+  // Multi-model gateways
+  openrouter:  { model: 'openrouter/auto',                hint: 'sk-or-...',   label: 'OpenRouter API Key' },
+  together:    { model: null,                              hint: 'your-key',    label: 'Together AI API Key' },
+  litellm:     { model: null,                              hint: 'your-key',    label: 'LiteLLM API Key' },
+  aigateway:   { model: null,                              hint: 'your-key',    label: 'Vercel AI Gateway API Key' },
+  cloudflare:  { model: null,                              hint: 'your-key',    label: 'Cloudflare AI Gateway API Key' },
+  synthetic:   { model: null,                              hint: 'your-key',    label: 'Synthetic API Key' },
+  // Specialized / other
+  groq:        { model: 'groq/llama-3.3-70b-versatile',   hint: 'gsk_...',     label: 'Groq API Key' },
+  huggingface: { model: null,                              hint: 'hf_...',      label: 'Hugging Face API Key' },
+  venice:      { model: null,                              hint: 'your-key',    label: 'Venice AI API Key' },
+  chutes:      { model: null,                              hint: 'your-key',    label: 'Chutes API Key' },
+  kilocode:    { model: null,                              hint: 'your-key',    label: 'Kilocode API Key' },
+  opencode:    { model: null,                              hint: 'your-key',    label: 'OpenCode Zen API Key' },
+  // Asia / regional
+  moonshot:    { model: 'moonshot/kimi-k2.5',             hint: 'sk-...',      label: 'Moonshot API Key' },
+  zai:         { model: 'zai/glm-4.5',                    hint: 'your-key',    label: 'Z.AI API Key' },
+  minimax:     { model: 'minimax/MiniMax-M2.7',            hint: 'your-key',    label: 'MiniMax API Key' },
+  modelstudio: { model: 'modelstudio/qwen-plus',           hint: 'your-key',    label: 'ModelStudio API Key' },
+  volcengine:  { model: null,                              hint: 'your-key',    label: 'Volcano Engine API Key' },
+  qianfan:     { model: null,                              hint: 'your-key',    label: 'Qianfan API Key' },
+  xiaomi:      { model: null,                              hint: 'your-key',    label: 'Xiaomi API Key' },
+  byteplus:    { model: null,                              hint: 'your-key',    label: 'BytePlus API Key' },
+  // Self-hosted / local
+  ollama:  { model: null, hint: null, label: null, urlHint: 'Do not add /v1 — openclaw uses the native Ollama API' },
+  vllm:    { model: null, hint: null, label: null, urlHint: 'e.g. http://localhost:8000 — the root URL of your vLLM server' },
+  sglang:  { model: null, hint: null, label: null, urlHint: 'e.g. http://localhost:30000 — the root URL of your SGLang server' },
+  custom:  { model: null, hint: 'your-key', label: 'API Key', urlHint: 'Base URL of your OpenAI- or Anthropic-compatible endpoint' },
 };
 
 function onProviderChange() {
-  const sel      = document.getElementById('provider');
-  const provider = sel.value;
-  const def      = providerDefaults[provider];
+  const provider = document.getElementById('provider').value;
+  const def = providerDefaults[provider] || {};
 
-  const isOllama = provider === 'ollama';
+  const isOllama     = provider === 'ollama';
+  const isSelfHosted = ['vllm', 'sglang'].includes(provider);
+  const isCustom     = provider === 'custom';
+  const isCloudflare = provider === 'cloudflare';
+  const noApiKey     = ['ollama', 'vllm', 'sglang'].includes(provider);
+  const showCustomUrl = isSelfHosted || isCustom;
 
-  // Toggle API key vs Ollama URL field
-  document.getElementById('field-apiKey').style.display       = isOllama ? 'none' : '';
+  // API key visibility
+  document.getElementById('field-apiKey').style.display = noApiKey ? 'none' : '';
+
+  // Ollama-specific fields
   document.getElementById('field-ollamaUrl').style.display    = isOllama ? '' : 'none';
-  // Toggle regular model input vs Ollama model dropdown
-  document.getElementById('field-model-wrap').style.display   = isOllama ? 'none' : '';
   document.getElementById('field-ollama-model').style.display = isOllama ? '' : 'none';
 
+  // Regular model input: shown for everything except Ollama
+  document.getElementById('field-model-wrap').style.display = isOllama ? 'none' : '';
+
+  // Custom URL field (vLLM / SGLang / Custom endpoint)
+  document.getElementById('field-customUrl').style.display    = showCustomUrl ? '' : 'none';
+  document.getElementById('field-cloudflareIds').style.display = isCloudflare ? '' : 'none';
+  document.getElementById('field-customCompat').style.display  = isCustom ? '' : 'none';
+
   if (isOllama) {
-    document.getElementById('ollamaUrl').placeholder = 'http://localhost:11434';
-    // Auto-fetch models as soon as Ollama is selected (URL may already be pre-filled)
     fetchOllamaModels();
-  } else if (def) {
-    document.getElementById('model').placeholder = def.model ? 'Leave blank to use ' + def.model : 'provider/model-name';
-    document.getElementById('model-hint').textContent = def.model ? '— if blank, ' + def.model + ' will be used' : '';
-    document.getElementById('model-optional-hint').textContent = 'optional';
+    return;
+  }
+
+  // Update URL hint for self-hosted providers
+  if (showCustomUrl && def.urlHint) {
+    document.getElementById('custom-url-hint').textContent = def.urlHint;
+  }
+
+  // Update API key label + placeholder
+  if (!noApiKey && def.label) {
     document.getElementById('apikey-label').textContent = def.label;
-    document.getElementById('apiKey').placeholder = def.hint;
+    document.getElementById('apiKey').placeholder = def.hint || 'Paste your API key';
+  }
+
+  // Update model field hint
+  const modelInput = document.getElementById('model');
+  if (isSelfHosted || isCustom) {
+    modelInput.placeholder = 'Model ID served by the endpoint';
+    document.getElementById('model-hint').textContent = '';
+    document.getElementById('model-optional-hint').textContent = 'optional';
+  } else if (def.model) {
+    modelInput.placeholder = 'Leave blank to use ' + def.model;
+    document.getElementById('model-hint').textContent = '— if blank, ' + def.model + ' will be used';
+    document.getElementById('model-optional-hint').textContent = 'optional';
   } else {
-    document.getElementById('model').placeholder = 'Leave blank for default';
+    modelInput.placeholder = 'provider/model-name';
     document.getElementById('model-hint').textContent = '';
     document.getElementById('model-optional-hint').textContent = 'optional';
   }
@@ -748,5 +869,17 @@ function escHtml(str) {
   } catch {}
 })();
 </script>
+
+<a href="https://github.com/praveen-ks-2001/openclaw-railway/issues" target="_blank" rel="noopener"
+  style="position:fixed; bottom:16px; right:16px; z-index:900;
+         display:flex; align-items:center; gap:8px;
+         background:var(--surface); border:1px solid var(--border); border-radius:8px;
+         padding:8px 14px; color:var(--text-dim); font-family:var(--font-mono); font-size:11px;
+         text-decoration:none; transition:border-color 0.15s, color 0.15s;"
+  onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent2)'"
+  onmouseout="this.style.borderColor='';this.style.color=''">
+  Having issues? Report on GitHub &rarr;
+</a>
+
 </body>
 </html>

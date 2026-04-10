@@ -10,7 +10,9 @@
       "Bash(node --check src/services/configBuilder.js)",
       "WebFetch(domain:fossies.org)",
       "WebFetch(domain:openclawlab.com)",
-      "WebFetch(domain:docs.z.ai)"
+      "WebFetch(domain:docs.z.ai)",
+      "Bash(node --check src/services/onboardBuilder.js)",
+      "Bash(node --check src/utils/validation.js)"
     ]
   }
 }
