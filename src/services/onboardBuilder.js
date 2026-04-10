@@ -30,47 +30,50 @@ import { log } from '../utils/log.js';
 //   extra       — additional static flags (e.g. for Groq's custom endpoint)
 
 const PROVIDER_MAP = {
-  anthropic: {
-    authChoice: 'apiKey',
-    keyFlag: '--anthropic-api-key',
-  },
-  openai: {
-    authChoice: 'openai-api-key',
-    keyFlag: '--openai-api-key',
-  },
-  google: {
-    authChoice: 'gemini-api-key',
-    keyFlag: '--gemini-api-key',
-  },
-  openrouter: {
-    authChoice: 'openrouter-api-key',
-    keyFlag: '--openrouter-api-key',
-  },
+  // ── Major AI Labs ────────────────────────────────────────────────
+  anthropic:   { authChoice: 'apiKey',                keyFlag: '--anthropic-api-key' },
+  openai:      { authChoice: 'openai-api-key',        keyFlag: '--openai-api-key' },
+  google:      { authChoice: 'gemini-api-key',        keyFlag: '--gemini-api-key' },
+  deepseek:    { authChoice: 'deepseek-api-key',      keyFlag: '--deepseek-api-key' },
+  xai:         { authChoice: 'xai-api-key',           keyFlag: '--xai-api-key' },
+  mistral:     { authChoice: 'mistral-api-key',       keyFlag: '--mistral-api-key' },
+
+  // ── Multi-Model Gateways ─────────────────────────────────────────
+  openrouter:  { authChoice: 'openrouter-api-key',   keyFlag: '--openrouter-api-key' },
+  together:    { authChoice: 'together-api-key',     keyFlag: '--together-api-key' },
+  litellm:     { authChoice: 'litellm-api-key',      keyFlag: '--litellm-api-key' },
+  aigateway:   { authChoice: 'ai-gateway-api-key',   keyFlag: '--ai-gateway-api-key' },
+  synthetic:   { authChoice: 'synthetic-api-key',    keyFlag: '--synthetic-api-key' },
+  cloudflare:  { authChoice: 'cloudflare-ai-gateway-api-key', keyFlag: '--cloudflare-ai-gateway-api-key' },
+
+  // ── Specialized / Other ──────────────────────────────────────────
   groq: {
-    // Groq has no native authChoice — use custom endpoint (OpenAI-compatible API)
+    // Groq has no native authChoice — use custom endpoint (OpenAI-compatible)
     authChoice: 'custom-api-key',
     keyFlag: '--custom-api-key',
-    extra: [
-      '--custom-base-url', 'https://api.groq.com/openai/v1',
-      '--custom-compatibility', 'openai',
-    ],
+    extra: ['--custom-base-url', 'https://api.groq.com/openai/v1', '--custom-compatibility', 'openai'],
   },
-  moonshot: {
-    authChoice: 'moonshot-api-key',
-    keyFlag: '--moonshot-api-key',
-  },
-  zai: {
-    authChoice: 'zai-api-key',
-    keyFlag: '--zai-api-key',
-  },
-  minimax: {
-    authChoice: 'minimax-global-api',
-    keyFlag: '--minimax-api-key',
-  },
-  ollama: {
-    authChoice: 'ollama',
-    keyFlag: null, // no API key
-  },
+  huggingface: { authChoice: 'huggingface-api-key',  keyFlag: '--huggingface-api-key' },
+  venice:      { authChoice: 'venice-api-key',       keyFlag: '--venice-api-key' },
+  chutes:      { authChoice: 'chutes-api-key',       keyFlag: '--chutes-api-key' },
+  kilocode:    { authChoice: 'kilocode-api-key',     keyFlag: '--kilocode-api-key' },
+  opencode:    { authChoice: 'opencode-zen',         keyFlag: '--opencode-zen-api-key' },
+
+  // ── Asia / Regional ──────────────────────────────────────────────
+  moonshot:    { authChoice: 'moonshot-api-key',     keyFlag: '--moonshot-api-key' },
+  zai:         { authChoice: 'zai-api-key',          keyFlag: '--zai-api-key' },
+  minimax:     { authChoice: 'minimax-global-api',   keyFlag: '--minimax-api-key' },
+  modelstudio: { authChoice: 'modelstudio-api-key',  keyFlag: '--modelstudio-api-key' },
+  volcengine:  { authChoice: 'volcengine-api-key',   keyFlag: '--volcengine-api-key' },
+  qianfan:     { authChoice: 'qianfan-api-key',      keyFlag: '--qianfan-api-key' },
+  xiaomi:      { authChoice: 'xiaomi-api-key',       keyFlag: '--xiaomi-api-key' },
+  byteplus:    { authChoice: 'byteplus-api-key',     keyFlag: '--byteplus-api-key' },
+
+  // ── Self-Hosted / Local ──────────────────────────────────────────
+  ollama:  { authChoice: 'ollama',         keyFlag: null },
+  vllm:    { authChoice: 'vllm',           keyFlag: null },
+  sglang:  { authChoice: 'sglang',         keyFlag: null },
+  custom:  { authChoice: 'custom-api-key', keyFlag: '--custom-api-key' },
 };
 
 // ─── Build onboard args ─────────────────────────────────────────────
@@ -110,18 +113,36 @@ export function buildOnboardArgs(data) {
     args.push(...mapping.extra);
   }
 
-  // Ollama-specific: pass URL and bare model ID via --custom-* flags
+  // ── Provider-specific extra args ──────────────────────────────────
+
+  // Ollama: URL via ollamaUrl field, bare model ID (strip "ollama/" prefix)
   if (data.provider === 'ollama') {
     if (data.ollamaUrl) {
       args.push('--custom-base-url', data.ollamaUrl);
     }
     if (data.model) {
-      // Strip "ollama/" prefix — onboard expects bare model ID (e.g. "deepseek-r1:1.5b")
-      const bareModel = data.model.startsWith('ollama/')
-        ? data.model.slice(7)
-        : data.model;
+      const bareModel = data.model.startsWith('ollama/') ? data.model.slice(7) : data.model;
       args.push('--custom-model-id', bareModel);
     }
+  }
+
+  // vLLM / SGLang: URL + model ID via customUrl / model fields
+  if (data.provider === 'vllm' || data.provider === 'sglang') {
+    if (data.customUrl) args.push('--custom-base-url', data.customUrl);
+    if (data.model)     args.push('--custom-model-id', data.model);
+  }
+
+  // Custom endpoint: URL + model ID + optional compatibility
+  if (data.provider === 'custom') {
+    if (data.customUrl)           args.push('--custom-base-url', data.customUrl);
+    if (data.model)               args.push('--custom-model-id', data.model);
+    if (data.customCompatibility) args.push('--custom-compatibility', data.customCompatibility);
+  }
+
+  // Cloudflare AI Gateway: account ID + gateway ID
+  if (data.provider === 'cloudflare') {
+    if (data.cloudflareAccountId) args.push('--cloudflare-ai-gateway-account-id', data.cloudflareAccountId);
+    if (data.cloudflareGatewayId) args.push('--cloudflare-ai-gateway-gateway-id', data.cloudflareGatewayId);
   }
 
   return args;
