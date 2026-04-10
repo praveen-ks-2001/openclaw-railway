@@ -15,7 +15,10 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { config, DATA_DIR, OPENCLAW_HOME, OPENCLAW_GATEWAY_TOKEN, WRAPPER_ADMIN_PASSWORD, OLLAMA_BASE_URL } from '../config/index.js';
 import { gatewayManager } from '../services/gatewayManager.js';
-import { buildOpenclaWConfig, buildEnvVars } from '../services/configBuilder.js';
+import {
+  buildOnboardArgs, runOpenclaw,
+  runConfigSet, runConfigSetJson, runModelsSet,
+} from '../services/onboardBuilder.js';
 import { validateSetupForm } from '../utils/validation.js';
 import { log } from '../utils/log.js';
 
@@ -99,19 +102,108 @@ setupRoutes.post('/save', async (req, res) => {
   }
 
   try {
-    // 1. Build the openclaw.json and env vars
-    const openlawConfig = buildOpenclaWConfig(data);
-    const envVars = buildEnvVars(data);
+    // ── 1. Run openclaw onboard ──────────────────────────────────
+    const onboardArgs = buildOnboardArgs(data);
+    log.info(`Running: openclaw ${onboardArgs.join(' ').replace(/--\S+-api-key\s+\S+/g, '--***-api-key ***')}`);
 
-    // 2. Write both files to the volume
-    await config.writeConfig(openlawConfig);
-    if (Object.keys(envVars).length > 0) {
-      await config.writeEnvFile(envVars);
+    const onboard = await runOpenclaw(onboardArgs);
+    log.info(`Onboard exit=${onboard.code} configured=${await config.isAlreadyConfigured()}`);
+
+    if (onboard.code !== 0 || !(await config.isAlreadyConfigured())) {
+      log.error('Onboard failed:', onboard.output);
+      return res.status(500).json({
+        ok: false,
+        error: `Onboard failed (exit ${onboard.code}). Check logs for details.`,
+        output: onboard.output,
+      });
     }
 
-    log.info('Config written. Launching OpenClaw gateway...');
+    // ── 2. Post-onboard gateway config patches ───────────────────
+    log.info('Onboard succeeded. Patching gateway config...');
 
-    // 3. Launch the gateway (non-blocking — SSE stream tracks progress)
+    await runConfigSet('gateway.controlUi.allowInsecureAuth', 'true');
+    if (OPENCLAW_GATEWAY_TOKEN) {
+      await runConfigSet('gateway.auth.token', OPENCLAW_GATEWAY_TOKEN);
+    }
+    await runConfigSetJson('gateway.trustedProxies', ['127.0.0.1', '::1']);
+    await runConfigSetJson('gateway.controlUi.allowedOrigins', ['*']);
+
+    // ── 3. Set model (if user provided one) ──────────────────────
+    if (data.model) {
+      log.info(`Setting model to ${data.model}...`);
+      await runModelsSet(data.model);
+    }
+
+    // ── 4. Channel configs ───────────────────────────────────────
+    if (data.telegramBotToken) {
+      await runConfigSetJson('channels.telegram', {
+        enabled: true,
+        botToken: data.telegramBotToken,
+        dmPolicy: data.telegramDmPolicy || 'pairing',
+        groupPolicy: 'open',
+        streamMode: 'partial',
+        ...(data.telegramAllowFrom
+          ? { allowFrom: data.telegramAllowFrom.split(/[,\n]/).map(s => s.trim()).filter(Boolean) }
+          : {}),
+        ...(data.telegramWebhookUrl
+          ? { webhookUrl: data.telegramWebhookUrl }
+          : {}),
+      });
+    }
+
+    if (data.discordBotToken) {
+      await runConfigSetJson('channels.discord', {
+        enabled: true,
+        token: data.discordBotToken,
+        groupPolicy: 'open',
+        dm: { policy: data.discordDmPolicy || 'pairing' },
+        ...(data.discordAllowFrom
+          ? { allowFrom: data.discordAllowFrom.split(/[,\n]/).map(s => s.trim()).filter(Boolean) }
+          : {}),
+      });
+    }
+
+    if (data.slackBotToken && data.slackAppToken) {
+      await runConfigSetJson('channels.slack', {
+        enabled: true,
+        botToken: data.slackBotToken,
+        appToken: data.slackAppToken,
+      });
+    }
+
+    if (data.googleChatServiceAccount) {
+      await runConfigSetJson('channels.googlechat', {
+        serviceAccount: data.googleChatServiceAccount,
+      });
+    }
+
+    if (data.mattermostUrl && data.mattermostToken) {
+      await runConfigSetJson('channels.mattermost', {
+        url: data.mattermostUrl,
+        token: data.mattermostToken,
+        ...(data.mattermostTeam ? { team: data.mattermostTeam } : {}),
+      });
+    }
+
+    // ── 5. Session config ────────────────────────────────────────
+    if (data.sessionScope) {
+      const session = {
+        dmScope: data.sessionScope,
+      };
+      if (data.sessionResetMode && data.sessionResetMode !== 'off') {
+        session.reset = {
+          mode: data.sessionResetMode,
+          ...(data.sessionResetHour
+            ? { atHour: parseInt(data.sessionResetHour, 10) }
+            : {}),
+        };
+      }
+      await runConfigSetJson('session', session);
+    }
+
+    // ── 6. Launch the gateway ────────────────────────────────────
+    log.info('Config complete. Launching OpenClaw gateway...');
+
     gatewayManager.start().catch((err) => {
       log.error('Gateway failed to start after setup:', err.message);
     });
