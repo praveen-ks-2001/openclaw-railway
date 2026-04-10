@@ -141,7 +141,7 @@ setupRoutes.post('/save', async (req, res) => {
         botToken: data.telegramBotToken,
         dmPolicy: data.telegramDmPolicy || 'pairing',
         groupPolicy: 'open',
-        streamMode: 'partial',
+        streaming: { mode: 'partial' },
         ...(data.telegramAllowFrom
           ? { allowFrom: data.telegramAllowFrom.split(/[,\n]/).map(s => s.trim()).filter(Boolean) }
           : {}),
