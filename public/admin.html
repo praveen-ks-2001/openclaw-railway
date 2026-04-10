@@ -414,6 +414,19 @@
   .refresh-spin { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  .btn.refreshing {
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: 0 0 8px rgba(232, 93, 38, 0.3), 0 0 16px rgba(232, 93, 38, 0.15);
+    animation: btn-glow 1s ease-in-out infinite alternate;
+    pointer-events: none;
+    opacity: 0.9;
+  }
+  @keyframes btn-glow {
+    from { box-shadow: 0 0 6px rgba(232, 93, 38, 0.25), 0 0 12px rgba(232, 93, 38, 0.1); }
+    to   { box-shadow: 0 0 12px rgba(232, 93, 38, 0.5),  0 0 24px rgba(232, 93, 38, 0.2); }
+  }
+
   .chip {
     display: inline-block;
     padding: 2px 8px;
@@ -652,8 +665,9 @@
       <div class="panel-header">
         <div class="panel-title">Device Pairing</div>
         <span style="font-size:12px; color: var(--text-dim); font-family: var(--font-mono);" id="pair-live-badge">● live</span>
-        <div class="panel-subtitle">
-          <button class="btn sm" onclick="refreshPairing()">↺ Refresh</button>
+        <div class="panel-subtitle" style="display:flex; gap:8px;">
+          <button class="btn sm success" id="btn-approve-all" style="display:none" onclick="approveAllPending()">✓ Approve All</button>
+          <button class="btn sm" id="btn-pair-refresh" onclick="refreshPairing()">↺ Refresh</button>
         </div>
       </div>
       <div class="panel-body">
@@ -797,6 +811,17 @@
 
   </div><!-- /main -->
 </div><!-- /layout -->
+
+<a href="https://github.com/praveen-ks-2001/openclaw-railway/issues" target="_blank" rel="noopener"
+  style="position:fixed; bottom:16px; right:16px; z-index:900;
+         display:flex; align-items:center; gap:8px;
+         background:var(--surface); border:1px solid var(--border); border-radius:8px;
+         padding:8px 14px; color:var(--text-dim); font-family:var(--font-mono); font-size:11px;
+         text-decoration:none; transition:border-color 0.15s, color 0.15s;"
+  onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent2)'"
+  onmouseout="this.style.borderColor='';this.style.color=''">
+  Having issues? Report on GitHub &rarr;
+</a>
 
 <div id="toast"></div>
 
@@ -1221,20 +1246,22 @@ function startPairingSSE() {
 }
 
 async function refreshPairing() {
-  const btn = document.querySelector('#panel-pairing .btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Refreshing...'; }
+  const btn = document.getElementById('btn-pair-refresh');
+  if (btn) { btn.classList.add('refreshing'); btn.textContent = '↺ Refreshing…'; }
   try {
     const [pd, pr] = await Promise.all([
       api('/pairing/pending'),
       api('/pairing/paired'),
     ]);
-    renderPendingList(pd.pending || []);
+    const pending = pd.pending || [];
+    renderPendingList(pending);
     renderPairedList(pr.paired || []);
-    updatePairingBadge((pd.pending || []).length);
+    updatePairingBadge(pending.length);
+    updateApproveAllBtn(pending);
   } catch (e) {
     toast('Failed to load pairing data: ' + e.message, 'err');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '↺ Refresh'; }
+    if (btn) { btn.classList.remove('refreshing'); btn.textContent = '↺ Refresh'; }
   }
 }
 
@@ -1326,6 +1353,56 @@ async function revokeDevice(deviceId, role) {
     refreshPairing();
   } catch (e) {
     toast('Revoke failed: ' + e.message, 'err');
+  }
+}
+
+function updateApproveAllBtn(pending) {
+  const btn = document.getElementById('btn-approve-all');
+  btn.style.display = (pending && pending.length >= 2) ? '' : 'none';
+}
+
+async function approveAllPending() {
+  const btn = document.getElementById('btn-approve-all');
+  btn.disabled = true;
+  btn.classList.add('refreshing');
+  btn.textContent = '✓ Approving…';
+
+  try {
+    const pd = await api('/pairing/pending');
+    const pending = pd.pending || [];
+    if (!pending.length) {
+      toast('No pending requests to approve', 'ok');
+      return;
+    }
+
+    let approved = 0;
+    let failed = 0;
+    for (const item of pending) {
+      const id = item.id || item.requestId;
+      if (!id) continue;
+      try {
+        await api('/pairing/approve', {
+          method: 'POST',
+          body: JSON.stringify({ requestId: id }),
+        });
+        approved++;
+      } catch {
+        failed++;
+      }
+    }
+
+    if (failed > 0) {
+      toast(`Approved ${approved}, failed ${failed}`, approved > 0 ? 'ok' : 'err');
+    } else {
+      toast(`Approved all ${approved} request${approved === 1 ? '' : 's'}`, 'ok');
+    }
+    setTimeout(refreshPairing, 500);
+  } catch (e) {
+    toast('Approve all failed: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.classList.remove('refreshing');
+    btn.textContent = '✓ Approve All';
   }
 }
 
