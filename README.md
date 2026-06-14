@@ -11,7 +11,7 @@ Self-host OpenClaw on Railway with this template and get a fully configured **ga
 
 ## 🚀 Getting Started with OpenClaw on Railway | Deployment Guide
 
-Once your Railway deploy is live, open your service URL — you'll be redirected to the `/setup` wizard automatically. Pick your AI provider (Anthropic, OpenAI, Google Gemini, Groq, or OpenRouter), paste your API key, and optionally configure messaging channels like Telegram or Discord. Click **Launch OpenClaw** and the gateway starts within seconds.
+Once your Railway deploy is live, open your service URL — you'll be redirected to the `/setup` wizard automatically. Pick your AI provider (40+ supported — Anthropic, OpenAI, Google Gemini, Groq, OpenRouter, Cerebras, and more), paste your API key — or use **OAuth sign-in** for OpenAI/xAI with no key needed — and optionally configure messaging channels like Telegram or Discord. Click **Launch OpenClaw** and the gateway starts within seconds.
 
 ### Step 1: Initial Setup via `/setup`
 
@@ -69,7 +69,7 @@ OpenClaw (formerly ClawdBot/MoltBot) is a fully open-source (MIT), local-first p
 **Key features:**
 
 - 🔌 Multi-channel messaging — WhatsApp, Telegram, Discord, Slack, Signal, iMessage, and 20+ more
-- 🤖 Multi-provider AI — Anthropic Claude, OpenAI GPT, Google Gemini, Groq, OpenRouter, or local models via Ollama
+- 🤖 Multi-provider AI — 40+ providers (Anthropic Claude, OpenAI GPT, Google Gemini, Groq, OpenRouter, Cerebras, and more), OAuth sign-in for OpenAI/xAI, or local models via Ollama / vLLM / SGLang
 - 🧠 Autonomous agent — browses the web, manages files, runs commands, schedules tasks via heartbeat daemon
 - 🎨 Live Canvas with A2UI — agent-driven visual workspace
 - 🔒 Self-hosted & private — your data, conversations, and memory stay on your machine
@@ -118,8 +118,8 @@ One-click deploy with zero server configuration:
 If you prefer to self-host outside Railway, clone this repo and run with Docker:
 
 ```
-git clone https://github.com/your-org/openclaw-railway-template.git
-cd openclaw-railway-template
+git clone https://github.com/praveen-ks-2001/openclaw-railway.git
+cd openclaw-railway
 docker build -t openclaw-railway .
 docker run -d \
   --name openclaw \
@@ -165,10 +165,10 @@ OpenClaw shines when you need an always-on autonomous agent accessible from any 
 OpenClaw is an open-source, self-hosted personal AI assistant that connects 20+ messaging platforms (WhatsApp, Telegram, Discord, etc.) to AI models like Claude, GPT, and Gemini. It runs on your own hardware, keeping all data private.
 
 **Can I use my own AI provider or local models?**
-Yes. The setup wizard supports Anthropic, OpenAI, Google Gemini, Groq, and OpenRouter out of the box. For local models, configure Ollama as a custom OpenAI-compatible endpoint. You can also set fallback models in the config.
+Yes. The setup wizard supports 40+ providers out of the box (Anthropic, OpenAI, Google Gemini, Groq, OpenRouter, Cerebras, DeepInfra, Fireworks, and more), plus OAuth sign-in for OpenAI and xAI. For local models, use Ollama, vLLM, or SGLang — or any custom OpenAI-/Anthropic-compatible endpoint. You can also set fallback models in the config.
 
 **Is it safe to expose OpenClaw to the public internet?**
 This template uses token-based auth (`OPENCLAW_GATEWAY_TOKEN`) and optional admin password protection. Device pairing requires explicit approval from the admin dashboard. Review the [OpenClaw security docs](https://docs.openclaw.ai/) before deploying to understand the trust model.
 
 **How do I update OpenClaw to a newer version?**
-Set the `OPENCLAW_VERSION` build argument in Railway (e.g., `2026.3.13`) and trigger a redeploy. Omit or set to `latest` to always pull the newest release on build.
+Set the `OPENCLAW_VERSION` build argument in your Railway service variables (e.g., `2026.6.6`) and redeploy — Railway rebuilds the image with that version. The template pins `2026.6.6` by default and is verified against it. For safety it enforces a **compatibility floor**: if you pin a concrete version *older* than the floor, the build automatically installs the floor instead (and the setup page tells you it did) so an outdated pin can't break the wrapper. Newer versions, `latest`, and pre-releases are installed as-is.
