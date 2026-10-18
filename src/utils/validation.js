@@ -8,6 +8,13 @@
 export function validateSetupForm(body) {
   const errors = [];
   const data = {};
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return {errors: ['Invalid setup form.'], data};
+  for (const [key, value] of Object.entries(body)) {
+    if (typeof value !== 'string' || value.length > 16_384 || value.includes('\0')) {
+      errors.push(`Invalid ${key}: use a text value without null bytes (maximum 16384 characters).`);
+    }
+  }
+  if (errors.length) return {errors, data};
 
   // ── Provider ──────────────────────────────────────────────────
   data.provider = (body.provider || '').trim();
@@ -72,6 +79,8 @@ export function validateSetupForm(body) {
     }
   }
 
+  if (data.provider === 'custom' && !(body.model || '').trim()) errors.push('Model ID is required for a custom endpoint.');
+
   // ── Cloudflare AI Gateway extra fields ────────────────────────
   data.cloudflareAccountId = (body.cloudflareAccountId || '').trim();
   data.cloudflareGatewayId = (body.cloudflareGatewayId || '').trim();
@@ -126,8 +135,24 @@ export function validateSetupForm(body) {
   data.mattermostToken = (body.mattermostToken || '').trim();
   data.mattermostTeam  = (body.mattermostTeam  || '').trim();
 
-  if (data.mattermostUrl && !data.mattermostToken) {
+  if (Boolean(data.mattermostUrl) !== Boolean(data.mattermostToken)) {
     errors.push('Mattermost requires both a server URL and a token.');
+  }
+
+  for (const key of ['ollamaUrl', 'customUrl', 'mattermostUrl', 'telegramWebhookUrl']) {
+    if (!data[key]) continue;
+    try {
+      const url = new URL(data[key]);
+      if (!['http:', 'https:'].includes(url.protocol) || !url.hostname || url.username || url.password || url.hash) throw new Error();
+    } catch { errors.push(`${key} must be an HTTP(S) URL without embedded credentials or a fragment.`); }
+  }
+  for (const channel of ['telegram', 'discord']) {
+    if (data[`${channel}BotToken`] && data[`${channel}DmPolicy`] === 'allowlist' && !data[`${channel}AllowFrom`]) {
+      errors.push(`${channel} allowlist policy requires at least one allowed sender.`);
+    }
+  }
+  if (body.sessionResetHour && (!/^\d{1,2}$/.test(body.sessionResetHour) || Number(body.sessionResetHour) > 23)) {
+    errors.push('Session reset hour must be an integer from 0 to 23.');
   }
 
   // ── Session settings ────────────────────────────────────────────

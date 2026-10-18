@@ -1,343 +1,196 @@
-/**
- * services/gatewayManager.js
- *
- * Manages the lifecycle of the openclaw gateway child process.
- *
- * Design principles:
- *  - Single source of truth for gateway state
- *  - Emits events so any part of the app can react (SSE, WS, logs)
- *  - Auto-restarts on crash with exponential backoff
- *  - Exposes WS proxy attachment for the HTTP server
- */
-
-import { spawn } from 'child_process';
-import { EventEmitter } from 'events';
+import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
+import net from 'node:net';
 import httpProxy from 'http-proxy';
-import net from 'net';
-import {
-  GATEWAY_PORT,
-  GATEWAY_HOST,
-  GATEWAY_INTERNAL_URL,
-  GATEWAY_WS_URL,
-  OPENCLAW_GATEWAY_TOKEN,
-  OPENCLAW_STATE_DIR,
-  DATA_DIR,
-  OPENCLAW_ENTRY,
-  OPENCLAW_NODE,
-} from '../config/index.js';
+import { createGatewayManager } from '../core/gateway-manager.js';
+import { createOutputFilter } from '../core/command-runner.js';
+import { applyProxyPolicy, usesIndependentAuthentication } from '../core/proxy-policy.js';
+import { isAdminAuthenticated, isAdminOriginAllowed } from '../middleware/auth.js';
+import { config, OPENCLAW_ENTRY, OPENCLAW_NODE, OPENCLAW_GATEWAY_TOKEN, WRAPPER_ADMIN_PASSWORD,
+  OPENCLAW_STATE_DIR, WORKSPACE_DIR, GATEWAY_PORT, GATEWAY_HOST, GATEWAY_INTERNAL_URL } from '../config/index.js';
+import { isOperationActive, getBootFailure, isCurrentOperationOwner, getOperationSignal } from './operations.js';
 import { log } from '../utils/log.js';
 
-// How long to wait before checking if gateway TCP port is open
-const READY_POLL_INTERVAL_MS = 500;
-const READY_TIMEOUT_MS = 60_000;
-
-// Restart backoff: 2s, 4s, 8s, 16s, 30s max
-const BACKOFF_BASE_MS = 2000;
-const BACKOFF_MAX_MS = 30_000;
+export function adminProxyToken(req) {
+  if (usesIndependentAuthentication(req.url) || !isAdminOriginAllowed(req)) return null;
+  if (req.headers.authorization) {
+    const headerOnly = { ...req, headers: { ...req.headers, cookie: undefined } };
+    if (!isAdminAuthenticated(headerOnly)) return null; // Preserve independent Gateway credentials.
+  }
+  return isAdminAuthenticated(req) ? OPENCLAW_GATEWAY_TOKEN : null;
+}
 
 class GatewayManager extends EventEmitter {
   constructor() {
     super();
-    this._proc = null;
-    this._state = 'stopped'; // stopped | starting | running | crashed
-    this._restartCount = 0;
-    this._restartTimer = null;
-    this._logs = []; // rolling last 500 lines
-    this._httpProxy = httpProxy.createProxyServer({
-      target: GATEWAY_INTERNAL_URL,
-      changeOrigin: true,
-      xfwd: true,
-      proxyTimeout: 120_000,
-      timeout: 120_000,
-    });
-
-    // Inject auth token into every HTTP proxy request so the gateway
-    // trusts connections from our wrapper without browser-level auth.
-    this._httpProxy.on('proxyReq', (proxyReq) => {
-      if (OPENCLAW_GATEWAY_TOKEN) {
-        proxyReq.setHeader('Authorization', `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
+    this._core = null;
+    this._logs = [];
+    this._sockets = new Set();
+    this._state = 'stopped';
+    this._beforeStart = async () => {};
+    this._canary = false;
+    this._env = { ...process.env };
+    this._httpProxy = httpProxy.createProxyServer({ target: GATEWAY_INTERNAL_URL,
+      changeOrigin: true, xfwd: false, proxyTimeout: 120000, timeout: 120000 });
+    this._httpProxy.on('proxyReq', (outgoing, req) => {
+      applyProxyPolicy(outgoing, req, adminProxyToken(req));
+      outgoing.removeHeader('x-admin-token');
+      const cookie = String(req.headers.cookie || '').split(';').filter((part) => !part.trim().startsWith('ocw_admin=')).join(';');
+      if (cookie) outgoing.setHeader('cookie', cookie); else outgoing.removeHeader('cookie');
+      if (req.rawBody) {
+        outgoing.setHeader('Content-Length', req.rawBody.length);
+        outgoing.removeHeader('transfer-encoding');
+        outgoing.write(req.rawBody);
       }
     });
-
-    this._httpProxy.on('error', (err, _req, res) => {
-      log.error(`Proxy error: ${err.message}`);
-      if (res && typeof res.headersSent !== 'undefined' && !res.headersSent) {
+    this._httpProxy.on('error', (_error, _req, res) => {
+      if (res && !res.headersSent && typeof res.writeHead === 'function') {
         res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Gateway not reachable', detail: err.message }));
-      }
+        res.end(JSON.stringify({ error: 'Gateway not reachable' }));
+      } else res?.destroy?.();
     });
   }
-
-  // ─── Public API ────────────────────────────────────────────────
-
-  isRunning() {
-    return this._state === 'running';
-  }
-
-  getState() {
-    return this._state;
-  }
-
-  getLogs(lines = 100) {
-    return this._logs.slice(-lines);
-  }
-
-  async start() {
-    if (this._state === 'running' || this._state === 'starting') {
-      log.warn('Gateway already running or starting — ignoring start()');
-      return;
+  setPreflight(action) { this._beforeStart = action; }
+  setCanary(enabled) {
+    this._canary = enabled;
+    for (const key of ['OPENCLAW_SKIP_CHANNELS','OPENCLAW_SKIP_PROVIDERS','OPENCLAW_SKIP_CRON','OPENCLAW_SKIP_GMAIL_WATCHER',
+      'OPENCLAW_SKIP_CANVAS_HOST','OPENCLAW_SKIP_BROWSER_CONTROL_SERVER','OPENCLAW_SKIP_STARTUP_MODEL_PREWARM']) {
+      if (enabled) this._env[key] = '1';
+      else if (process.env[key] === undefined) delete this._env[key];
+      else this._env[key] = process.env[key];
     }
-
-    this._setState('starting');
-    this._restartCount = 0;
-    this._spawnProcess();
-
-    // Wait for the gateway TCP port to be accepting connections
-    try {
-      await this._waitForReady();
-      this._setState('running');
-      log.info('✅ OpenClaw gateway is ready');
-    } catch (err) {
-      log.error('Gateway failed to become ready:', err.message);
-      this._setState('crashed');
-    }
+    this._env.OPENCLAW_NO_AUTO_UPDATE = '1';
   }
-
-  async stop() {
-    if (this._restartTimer) {
-      clearTimeout(this._restartTimer);
-      this._restartTimer = null;
-    }
-    if (this._proc) {
-      this._proc.kill('SIGTERM');
-      this._proc = null;
-    }
-    this._setState('stopped');
-  }
-
-  async restart() {
-    log.info('Restarting OpenClaw gateway...');
-    await this.stop();
-    await new Promise((r) => setTimeout(r, 500));
-    await this.start();
-  }
-
-  /**
-   * Called from server.js's single upgrade handler to forward a WS
-   * connection to the openclaw gateway.
-   *
-   * Uses raw TCP socket piping instead of http-proxy.ws() because
-   * http-proxy v1.18.1 has broken WS frame forwarding on Node 22.
-   * Also injects Authorization header so the gateway trusts the
-   * connection without needing browser-level WS handshake auth.
-   */
-  handleWsUpgrade(req, socket, head) {
-    const url = req.url || '';
-
-    if (!this.isRunning()) {
-      socket.write('HTTP/1.1 503 Service Unavailable\r\n\r\n');
-      socket.destroy();
-      return;
-    }
-
-    log.info(`WS proxying: ${url} → ${GATEWAY_WS_URL}${url}`);
-
-    // Raw TCP connection to openclaw gateway — bypasses http-proxy's
-    // broken WS piping so frames actually flow in both directions.
-    const proxySocket = net.connect(GATEWAY_PORT, GATEWAY_HOST, () => {
-      // Reconstruct the HTTP upgrade request, injecting auth + host headers
-      let raw = `${req.method} ${url} HTTP/${req.httpVersion}\r\n`;
-      let hasAuth = false;
-
-      for (let i = 0; i < req.rawHeaders.length; i += 2) {
-        const key = req.rawHeaders[i];
-        const val = req.rawHeaders[i + 1];
-        const lower = key.toLowerCase();
-
-        if (lower === 'host') {
-          raw += `${key}: ${GATEWAY_HOST}:${GATEWAY_PORT}\r\n`;
-        } else if (lower === 'authorization') {
-          // Replace any existing auth with our gateway token
-          hasAuth = true;
-          if (OPENCLAW_GATEWAY_TOKEN) {
-            raw += `${key}: Bearer ${OPENCLAW_GATEWAY_TOKEN}\r\n`;
-          } else {
-            raw += `${key}: ${val}\r\n`;
-          }
-        } else {
-          raw += `${key}: ${val}\r\n`;
-        }
-      }
-
-      // Inject Authorization if not already present
-      if (!hasAuth && OPENCLAW_GATEWAY_TOKEN) {
-        raw += `Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}\r\n`;
-      }
-
-      raw += '\r\n';
-
-      proxySocket.write(raw);
-
-      // Forward any buffered data (may contain the first WS frame)
-      if (head && head.length > 0) {
-        proxySocket.write(head);
-      }
-
-      // Bidirectional pipe — gateway's 101 response + WS frames
-      // flow to the client and vice versa
-      proxySocket.pipe(socket);
-      socket.pipe(proxySocket);
-    });
-
-    proxySocket.on('error', (err) => {
-      log.warn(`WS proxy error for ${url}: ${err.message}`);
-      socket.destroy();
-    });
-
-    socket.on('error', () => {
-      proxySocket.destroy();
-    });
-
-    socket.on('close', () => proxySocket.destroy());
-    proxySocket.on('close', () => socket.destroy());
-  }
-
-  /**
-   * Returns the underlying http-proxy instance for use in the proxy middleware.
-   */
-  getHttpProxy() {
-    return this._httpProxy;
-  }
-
-  // ─── Private ───────────────────────────────────────────────────
-
-  _spawnProcess() {
-    log.info('Spawning openclaw gateway process...');
-
-    const env = {
-      ...process.env,
-      HOME: DATA_DIR,                      // openclaw writes ~/.openclaw → /data/.openclaw
-      OPENCLAW_STATE_DIR: OPENCLAW_STATE_DIR,
-      // Bind gateway to loopback — our wrapper is the public face
-      OPENCLAW_GATEWAY_BIND: 'loopback',
-    };
-
-    // Match reference: openclaw gateway run --bind loopback --port 18789 --auth token --token <TOKEN>
-    const args = [
-      'gateway', 'run',
-      '--bind', 'loopback',
-      '--port', String(GATEWAY_PORT),
-      '--allow-unconfigured',
-    ];
-
-    if (OPENCLAW_GATEWAY_TOKEN) {
-      args.push('--auth', 'token', '--token', OPENCLAW_GATEWAY_TOKEN);
-    }
-
-    // Invoke entry.js directly via node — matches reference template, avoids
-    // bin-wrapper init quirks in containers.
-    this._proc = spawn(OPENCLAW_NODE, [OPENCLAW_ENTRY, ...args], {
-      env,
+  _initialize() {
+    if (this._core) return;
+    this._core = createGatewayManager({
+      entry: OPENCLAW_ENTRY, node: OPENCLAW_NODE, stateDir: OPENCLAW_STATE_DIR,
+      workspaceDir: WORKSPACE_DIR, token: OPENCLAW_GATEWAY_TOKEN, host: GATEWAY_HOST, port: GATEWAY_PORT,
+      env: this._env, startupTimeoutMs: 180000, preflightTimeoutMs: 600000,
+      isConfigured: () => config.isAlreadyConfiguredSync() && (!getBootFailure() || isCurrentOperationOwner()),
+      getExtraGatewayArgs: () => this._canary ? ['--update-canary'] : [],
+      beforeStart: (context) => this._beforeStart(context),
       stdio: ['ignore', 'pipe', 'pipe'],
-      detached: false,
-    });
-
-    this._proc.stdout.on('data', (chunk) => {
-      const lines = chunk.toString().split('\n').filter(Boolean);
-      lines.forEach((line) => this._appendLog('stdout', line));
-    });
-
-    this._proc.stderr.on('data', (chunk) => {
-      const lines = chunk.toString().split('\n').filter(Boolean);
-      lines.forEach((line) => this._appendLog('stderr', line));
-    });
-
-    this._proc.on('exit', (code, signal) => {
-      log.warn(`Gateway process exited (code=${code}, signal=${signal})`);
-      this._proc = null;
-
-      if (this._state !== 'stopped') {
-        this._setState('crashed');
-        this._scheduleRestart();
-      }
-    });
-
-    this._proc.on('error', (err) => {
-      log.error('Failed to spawn openclaw:', err.message);
-      this._setState('crashed');
-      this._scheduleRestart();
-    });
-  }
-
-  _scheduleRestart() {
-    const delay = Math.min(
-      BACKOFF_BASE_MS * Math.pow(2, this._restartCount),
-      BACKOFF_MAX_MS
-    );
-    this._restartCount += 1;
-    log.info(`Scheduling gateway restart in ${delay}ms (attempt #${this._restartCount})`);
-
-    this._restartTimer = setTimeout(async () => {
-      this._restartTimer = null;
-      this._spawnProcess();
-      try {
-        await this._waitForReady();
-        this._setState('running');
-        log.info('✅ Gateway recovered after restart');
-      } catch {
-        log.error('Gateway failed to recover — will retry');
-        this._scheduleRestart();
-      }
-    }, delay);
-  }
-
-  _waitForReady() {
-    return new Promise((resolve, reject) => {
-      const deadline = Date.now() + READY_TIMEOUT_MS;
-
-      const poll = () => {
-        if (Date.now() > deadline) {
-          return reject(new Error(`Gateway not ready after ${READY_TIMEOUT_MS}ms`));
+      log: (level, message) => {
+        this._appendLog(level, message);
+        if (message.startsWith('exited ')) this._setState('crashed');
+        if (message.startsWith('starting foreground')) this._setState('starting');
+        if (message.startsWith('auto-restart failed')) this._setState('crashed');
+      },
+      spawn: (command, args, options) => {
+        const child = spawn(command, args, options);
+        for (const [name, stream] of [['stdout',child.stdout], ['stderr',child.stderr]]) {
+          let pending = '';
+          const filter = createOutputFilter([OPENCLAW_GATEWAY_TOKEN, WRAPPER_ADMIN_PASSWORD], (chunk) => {
+            pending += chunk;
+            const lines = pending.split(/\r?\n/);
+            pending = lines.pop();
+            for (const line of lines) if (line) this._appendLog(name, line);
+          });
+          stream?.setEncoding('utf8');
+          stream?.on('data', (chunk) => filter.write(chunk));
+          stream?.on('end', () => { filter.end(); if (pending) this._appendLog(name, pending); });
         }
-
-        const socket = new net.Socket();
-        socket.setTimeout(READY_POLL_INTERVAL_MS);
-
-        socket.on('connect', () => {
-          socket.destroy();
-          resolve();
-        });
-
-        socket.on('error', () => {
-          socket.destroy();
-          setTimeout(poll, READY_POLL_INTERVAL_MS);
-        });
-
-        socket.on('timeout', () => {
-          socket.destroy();
-          setTimeout(poll, READY_POLL_INTERVAL_MS);
-        });
-
-        socket.connect(GATEWAY_PORT, GATEWAY_HOST);
-      };
-
-      poll();
+        return child;
+      },
     });
   }
-
   _appendLog(stream, line) {
-    const entry = { ts: new Date().toISOString(), stream, line };
+    const entry = { ts: new Date().toISOString(), stream, line: String(line) };
     this._logs.push(entry);
     if (this._logs.length > 500) this._logs.shift();
     this.emit('log', entry);
+    log[stream === 'stderr' || stream === 'error' ? 'error' : stream === 'warn' ? 'warn' : 'info'](entry.line);
   }
-
-  _setState(state) {
-    this._state = state;
-    this.emit('stateChange', state);
-    log.info(`Gateway state → ${state}`);
+  _setState(state) { if (this._state !== state) { this._state = state; this.emit('stateChange', state); } }
+  isRunning() { return this._core?.isReady() || false; }
+  getState() {
+    if (this._core?.isReady()) this._setState('running');
+    else if (this._core?.isStarting()) this._setState('starting');
+    else if (this._state === 'running') this._setState('stopped');
+    return this._state;
+  }
+  getLogs(lines = 100) { return this._logs.slice(-lines); }
+  getHttpProxy() { return this._httpProxy; }
+  async start({ signal = getOperationSignal() } = {}) {
+    this._initialize();
+    signal?.throwIfAborted();
+    let stopping;
+    const abort = () => { stopping = this._core.stop(); stopping.catch(() => {}); };
+    signal?.addEventListener('abort', abort, { once: true });
+    this._setState('starting');
+    try {
+      const result = await this._core.start();
+      signal?.throwIfAborted();
+      if (!result?.ok || !this._core.isReady()) throw new Error('Gateway did not become ready');
+      this._setState('running');
+      return result;
+    } catch (error) { this._setState('crashed'); throw error; }
+    finally { signal?.removeEventListener('abort', abort); if (stopping) await stopping; }
+  }
+  async stop(options = {}) {
+    for (const socket of this._sockets) socket.destroy();
+    if (this._core) await this._core.stop(options);
+    else await assertGatewayAbsent();
+    this._setState('stopped');
+  }
+  async restart({ signal = getOperationSignal() } = {}) {
+    this._initialize();
+    signal?.throwIfAborted();
+    let stopping;
+    const abort = () => { stopping = this._core.stop(); stopping.catch(() => {}); };
+    signal?.addEventListener('abort', abort, { once: true });
+    this._setState('starting');
+    try {
+      const result = await this._core.restart();
+      signal?.throwIfAborted();
+      if (!result?.ok || !this._core.isReady()) throw new Error('Gateway restart did not become ready');
+      this._setState('running');
+      return result;
+    } catch (error) { this._setState('crashed'); throw error; }
+    finally { signal?.removeEventListener('abort', abort); if (stopping) await stopping; }
+  }
+  async shutdown() { await this.stop({ shutdown: true }); this._httpProxy.close(); }
+  handleWsUpgrade(req, socket, head) {
+    const unavailable = () => !this.isRunning() || isOperationActive() || Boolean(getBootFailure());
+    if (unavailable()) {
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
+      return;
+    }
+    const upstream = net.connect(GATEWAY_PORT, GATEWAY_HOST);
+    upstream.setTimeout(10000, () => upstream.destroy());
+    this._sockets.add(upstream);
+    upstream.once('connect', () => {
+      if (unavailable()) { upstream.destroy(); socket.destroy(); return; }
+      upstream.setTimeout(0);
+      const headers = new Map();
+      for (let i=0;i<req.rawHeaders.length;i+=2) headers.set(req.rawHeaders[i].toLowerCase(),req.rawHeaders[i+1]);
+      headers.set('host', `${GATEWAY_HOST}:${GATEWAY_PORT}`);
+      const outgoing = { getHeaderNames: () => [...headers.keys()], setHeader: (k,v) => headers.set(k.toLowerCase(),v),
+        removeHeader: (k) => headers.delete(k.toLowerCase()) };
+      applyProxyPolicy(outgoing, req, adminProxyToken(req));
+      headers.delete('x-admin-token');
+      const cookie = String(headers.get('cookie') || '').split(';').filter((part) => !part.trim().startsWith('ocw_admin=')).join(';');
+      if (cookie) headers.set('cookie',cookie); else headers.delete('cookie');
+      let raw = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`;
+      for (const [key,value] of headers) raw += `${key}: ${value}\r\n`;
+      upstream.write(raw + '\r\n');
+      if (head?.length) upstream.write(head);
+      upstream.pipe(socket); socket.pipe(upstream);
+    });
+    upstream.on('error', () => socket.destroy());
+    socket.on('error', () => upstream.destroy());
+    socket.on('close', () => upstream.destroy());
+    upstream.on('close', () => { this._sockets.delete(upstream); socket.destroy(); });
   }
 }
-
-// Singleton
+export function assertGatewayAbsent() {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(GATEWAY_PORT, GATEWAY_HOST);
+    socket.setTimeout(2000);
+    socket.once('connect', () => { socket.destroy(); reject(new Error('A Gateway is still listening; stop its owner before modifying persistent data')); });
+    socket.once('timeout', () => { socket.destroy(); reject(new Error('Cannot confirm Gateway has stopped')); });
+    socket.once('error', (error) => { socket.destroy(); error.code === 'ECONNREFUSED' ? resolve() : reject(error); });
+  });
+}
 export const gatewayManager = new GatewayManager();

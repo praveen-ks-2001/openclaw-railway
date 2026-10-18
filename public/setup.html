@@ -197,11 +197,8 @@
             background:rgba(232,93,38,0.06); border:1px solid rgba(232,93,38,0.4);
             border-radius:10px; padding:14px 18px;
             color:var(--text); font-family:var(--font-mono); font-size:12px; line-height:1.6;">
-  <strong style="color:var(--accent2)">&#9888; Built for OpenClaw 2026.6.6.</strong>
-  This template's default <code>OPENCLAW_VERSION</code> build arg is pinned to
-  <code>2026.6.6</code> and verified against it. Newer releases usually work too;
-  if you pin an older one and setup fails, bump <code>OPENCLAW_VERSION</code> in
-  your Railway build args (requires Node &ge; 22.19).
+  <strong style="color:var(--accent2)">Checking this branch's OpenClaw version…</strong>
+  The deployment branch selects the version. Railway version variables and build arguments do not override it.
 </div>
 
 <div id="error-list"><ul id="error-items"></ul></div>
@@ -480,7 +477,7 @@
     <span class="required-note">approve access</span>
   </div>
   <p style="font-size:13px; color:var(--text-dim); margin-bottom:16px; line-height:1.5;">
-    Your channel DM policy is set to <strong>pairing</strong>. Send a message to your bot on the channel, then enter the pairing code shown here to approve access.
+    Your channel DM policy is set to <strong>pairing</strong>. Send a direct message to your bot, then enter the code from its reply to approve channel access. This is separate from approving your browser in <strong>Admin Dashboard → Pairing</strong>.
   </p>
   <div class="field-row">
     <div class="field">
@@ -535,7 +532,7 @@
     </div>
 
     <p style="font-size:11px; color:var(--text-dim); margin-top:14px; margin-bottom:0;">
-      Code expires in 15 minutes. This page will continue automatically once you finish.
+      Complete sign-in before the provider's code expires. Keep this page open; setup continues automatically when sign-in finishes.
     </p>
   </div>
 
@@ -555,8 +552,9 @@
   <button class="btn-launch" id="btn-launch" onclick="launch()">
     &#x1F99E; Launch OpenClaw
   </button>
-  <div id="launch-status"></div>
+  <div id="launch-status" role="status" aria-live="polite"></div>
   <p id="admin-link" style="display:none; margin-top:16px;"><a href="/admin" style="color:var(--accent);font-family:var(--font-mono);font-size:14px;text-decoration:none;font-weight:500;">&rarr; Go to Admin Dashboard</a></p>
+  <p style="margin-top:16px; color:var(--text-dim); font-size:13px; line-height:1.6;">After setup, open the OpenClaw UI from the Admin Dashboard. If it shows <strong>Approve this browser</strong> or a device-approval command, keep that tab open and return to <strong>Admin Dashboard → Pairing</strong>. Approve the matching request ID, then return to the OpenClaw tab; it reconnects automatically, or use <strong>Check now</strong>.</p>
 </div>
 
 <script>
@@ -875,12 +873,6 @@ async function launchApiKey(body, status, errBox, errItems) {
       document.getElementById('btn-launch').disabled = false;
       return;
     }
-    if (res.status === 409) {
-      status.className = 'ok';
-      status.textContent = data.error || 'Gateway is already running.';
-      document.getElementById('admin-link').style.display = 'block';
-      return;
-    }
     throw new Error(data.error || 'Unknown error');
   }
 
@@ -1065,11 +1057,11 @@ function skipToAdmin() {
 
 async function pollUntilRunning(attempts) {
   attempts = attempts || 0;
-  if (attempts > 60) throw new Error('Gateway did not start within 60 seconds');
+  if (attempts > 600) throw new Error('Gateway is still starting. Open Admin Dashboard → Logs to check progress before trying setup again.');
   var res = await fetch('/api/status').catch(function() { return null; });
   if (res && res.ok) {
     var data = await res.json().catch(function() { return {}; });
-    if (data.state === 'running') return;
+    if (data.state === 'running' && data.ready !== false) return;
     if (data.state === 'crashed') throw new Error('Gateway crashed during startup. Check logs at /admin.');
   }
   await new Promise(function(r) { setTimeout(r, 1000); });
@@ -1081,34 +1073,24 @@ function escHtml(str) {
 
 }
 
-// ── Version compatibility banner ──────────────────────────────────
-// Driven by /api/status `version` info. Surfaces an auto-bump (the build
-// installed the compatibility floor because the pinned OPENCLAW_VERSION was
-// too old) or a still-too-old running version.
+// Version comes from the branch manifest, never from Railway overrides.
 function renderVersionBanner(v) {
   if (!v) return;
   var el = document.getElementById('version-banner');
   if (!el) return;
-  var min = escHtml(v.min || '2026.6.6');
-  var installed = escHtml(v.installed || 'unknown');
-  if (v.bumped) {
-    el.style.borderColor = 'var(--accent)';
-    el.style.background = 'rgba(232,93,38,0.10)';
-    el.innerHTML = '<strong style="color:var(--accent2)">⚠ OpenClaw version auto-bumped for compatibility.</strong> '
-      + 'You set <code>OPENCLAW_VERSION = ' + escHtml(v.requested || '?') + '</code>, but this template is built for OpenClaw <code>' + min + '</code> and newer. '
-      + 'It was automatically installed as <code>' + installed + '</code> so setup keeps working. '
-      + 'To pin a different (newer) version, set <code>OPENCLAW_VERSION</code> to <code>' + min + '</code> or higher in your Railway variables and redeploy.';
-  } else if (v.belowMin) {
+  var pinned = escHtml(v.pinned || v.min || 'unknown');
+  var effective = v.effective || v.installed;
+  var installed = escHtml(effective || 'unknown');
+  if (effective && v.pinned && effective !== v.pinned) {
     el.style.borderColor = 'var(--red)';
     el.style.background = 'rgba(248,81,73,0.08)';
-    el.innerHTML = '<strong style="color:var(--red)">⚠ Unsupported OpenClaw version.</strong> '
-      + 'This deployment is running OpenClaw <code>' + installed + '</code>, below the minimum supported (<code>' + min + '</code>). Setup may fail. '
-      + 'Redeploy to auto-install <code>' + min + '</code>, or set <code>OPENCLAW_VERSION</code> &ge; <code>' + min + '</code> in your Railway build args.';
+    el.innerHTML = '<strong style="color:var(--red)">OpenClaw version does not match this branch.</strong> '
+      + 'Installed: <code>' + installed + '</code>; required: <code>' + pinned + '</code>. Redeploy this branch before continuing setup.';
   } else {
     el.style.borderColor = 'var(--border)';
     el.style.background = 'var(--surface)';
-    el.innerHTML = '<strong style="color:var(--accent2)">✔ OpenClaw ' + installed + '.</strong> '
-      + 'This template is built for OpenClaw <code>' + min + '</code> and verified against it.';
+    el.innerHTML = '<strong style="color:var(--accent2)">This branch runs OpenClaw ' + pinned + '.</strong> '
+      + 'Railway version variables and build arguments are ignored. To select another supported version, deploy its release branch.';
   }
 }
 

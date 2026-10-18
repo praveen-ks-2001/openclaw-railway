@@ -1,37 +1,12 @@
-/**
- * services/onboardBuilder.js
- *
- * Delegates openclaw configuration to `openclaw onboard --non-interactive`
- * instead of building openclaw.json by hand. This keeps us compatible with
- * config schema changes across openclaw versions.
- *
- * Exports:
- *  - buildOnboardArgs(data)   — returns the CLI args array for onboard
- *  - runOpenclaw(args)        — spawns `openclaw <args>` and returns { code, output }
- *  - runConfigSet(key, value) — shorthand for `openclaw config set key value`
- *  - runConfigSetJson(key, v) — shorthand for `openclaw config set --strict-json key <json>`
- *  - runModelsSet(model)      — shorthand for `openclaw models set <model>`
- */
-
-import { spawn } from 'child_process';
+/** Preserve this template's form IDs while adapting to the pinned OpenClaw CLI. */
 import pty from 'node-pty';
-import {
-  DATA_DIR,
-  OPENCLAW_HOME,
-  OPENCLAW_GATEWAY_TOKEN,
-  GATEWAY_PORT,
-  OPENCLAW_ENTRY,
-  OPENCLAW_NODE,
-} from '../config/index.js';
-import { log } from '../utils/log.js';
+import { createOutputFilter } from '../core/command-runner.js';
+import { buildOnboardArgs as makeOnboardArgs, ensureRequiredPlugins } from '../core/openclaw-compat.js';
+import { config, WORKSPACE_DIR, OPENCLAW_HOME, OPENCLAW_CONFIG_PATH, OPENCLAW_GATEWAY_TOKEN, WRAPPER_ADMIN_PASSWORD, GATEWAY_PORT, OPENCLAW_ENTRY, OPENCLAW_NODE } from '../config/index.js';
+import { PINNED_OPENCLAW_VERSION } from '../utils/version.js';
+import { runCli, runSdk, openclawRoot, openclawEnvironment } from './openclawRuntime.js';
 
-// ─── Auth mode → openclaw authChoice mapping ────────────────────────
-//
-// Some providers support OAuth/device-pairing instead of API keys. These
-// require running `openclaw onboard` interactively (via PTY) so the user
-// can see the device-code URL and complete login in a browser.
-
-const OAUTH_AUTH_CHOICE = {
+export const OAUTH_AUTH_CHOICE = {
   // provider:authMode → openclaw --auth-choice value
   //
   // Only *device-code* OAuth flows are listed here — they print a short URL +
@@ -59,7 +34,7 @@ export function isOauthRequest(data) {
 //   keyFlag     — the CLI flag for the API key (null if no key needed)
 //   extra       — additional static flags (e.g. for Groq's custom endpoint)
 
-const PROVIDER_MAP = {
+export const PROVIDER_MAP = {
   // ── Major AI Labs ────────────────────────────────────────────────
   anthropic:   { authChoice: 'apiKey',                keyFlag: '--anthropic-api-key' },
   openai:      { authChoice: 'openai-api-key',        keyFlag: '--openai-api-key' },
@@ -125,266 +100,122 @@ const PROVIDER_MAP = {
   custom:  { authChoice: 'custom-api-key', keyFlag: '--custom-api-key' },
 };
 
-// ─── Build onboard args ─────────────────────────────────────────────
+export function toAuthPayload(data) {
+  const interactive = isOauthRequest(data);
+  const mapping = PROVIDER_MAP[data.provider];
+  if (!mapping) throw new Error(`Unknown provider: ${data.provider}`);
+  const authChoice = interactive ? OAUTH_AUTH_CHOICE[`${data.provider}:${data.authMode}`] : mapping.authChoice;
+  return {
+    authChoice, authSecret: data.apiKey || '',
+    customBaseUrl: data.provider === 'groq' ? 'https://api.groq.com/openai/v1' : data.customUrl || data.ollamaUrl || '',
+    customModelId: data.provider === 'groq' ? (data.model?.replace(/^groq\//, '') || 'llama-3.3-70b-versatile') : data.model || '',
+    customCompatibility: data.provider === 'groq' ? 'openai' : data.customCompatibility || '',
+    cloudflareAccountId: data.cloudflareAccountId || '', cloudflareGatewayId: data.cloudflareGatewayId || '',
+    discordToken: data.discordBotToken || '', slackBotToken: data.slackBotToken || '', slackAppToken: data.slackAppToken || '',
+    mattermostToken: data.mattermostToken || '', googleChatServiceAccount: data.googleChatServiceAccount || '',
+  };
+}
 
 export function buildOnboardArgs(data) {
-  const workspaceDir = `${DATA_DIR}/.openclaw/workspace`;
-  const interactive = isOauthRequest(data);
-
-  const args = [
-    'onboard',
-    '--accept-risk',
-    '--no-install-daemon',
-    '--skip-health',
-    // Skip the interactive "Enable hooks?" prompt entirely. Without this the
-    // OAuth PTY flow has to pattern-match and auto-answer it (see autoInputs in
-    // setup.js), which is fragile if the prompt wording changes. (2026.6.x)
-    '--skip-hooks',
-    // Keep the gateway token out of onboard's stdout — it would otherwise be
-    // echoed into the OAuth output we stream live to the browser. (2026.6.x)
-    '--suppress-gateway-token-output',
-    '--workspace', workspaceDir,
-    '--gateway-bind', 'loopback',
-    '--gateway-port', String(GATEWAY_PORT),
-    '--gateway-auth', 'token',
-    '--gateway-token', OPENCLAW_GATEWAY_TOKEN,
-    '--flow', 'quickstart',
-  ];
-
-  if (interactive) {
-    // OAuth/device-code flows — onboard prompts the user via stdout, so we
-    // run it under a PTY and stream output to the browser. Skip channel,
-    // skill, search, UI prompts so the only interaction is the OAuth login.
-    args.push('--mode', 'local', '--skip-channels', '--skip-skills', '--skip-search', '--skip-ui');
-  } else {
-    args.push('--non-interactive', '--json');
+  const payload = toAuthPayload(data);
+  const args = makeOnboardArgs(payload, { workspaceDir: WORKSPACE_DIR, gatewayPort: GATEWAY_PORT, gatewayToken: OPENCLAW_GATEWAY_TOKEN });
+  if (['ollama', 'vllm', 'sglang'].includes(data.provider)) {
+    if (payload.customBaseUrl) args.push('--custom-base-url', payload.customBaseUrl);
+    if (data.model) args.push('--custom-model-id', data.provider === 'ollama' ? data.model.replace(/^ollama\//, '') : data.model);
   }
-
-  // ── Auth choice ──────────────────────────────────────────────────
-  // OAuth providers override the standard authChoice with a device-code variant.
-
-  let authChoice;
-  if (interactive) {
-    authChoice = OAUTH_AUTH_CHOICE[`${data.provider}:${data.authMode}`];
-  } else {
-    const mapping = PROVIDER_MAP[data.provider];
-    if (!mapping) throw new Error(`Unknown provider: ${data.provider}`);
-    authChoice = mapping.authChoice;
-
-    if (mapping.keyFlag && data.apiKey) {
-      args.push(mapping.keyFlag, data.apiKey);
-    }
-    if (mapping.extra) {
-      args.push(...mapping.extra);
-    }
-  }
-
-  args.push('--auth-choice', authChoice);
-
-  // ── Provider-specific extra args ──────────────────────────────────
-
-  // Ollama: URL via ollamaUrl field, bare model ID (strip "ollama/" prefix)
-  if (data.provider === 'ollama') {
-    if (data.ollamaUrl) {
-      args.push('--custom-base-url', data.ollamaUrl);
-    }
-    if (data.model) {
-      const bareModel = data.model.startsWith('ollama/') ? data.model.slice(7) : data.model;
-      args.push('--custom-model-id', bareModel);
-    }
-  }
-
-  // vLLM / SGLang: URL + model ID via customUrl / model fields
-  if (data.provider === 'vllm' || data.provider === 'sglang') {
-    if (data.customUrl) args.push('--custom-base-url', data.customUrl);
-    if (data.model)     args.push('--custom-model-id', data.model);
-  }
-
-  // Custom endpoint: URL + model ID + optional compatibility
-  if (data.provider === 'custom') {
-    if (data.customUrl)           args.push('--custom-base-url', data.customUrl);
-    if (data.model)               args.push('--custom-model-id', data.model);
-    if (data.customCompatibility) args.push('--custom-compatibility', data.customCompatibility);
-  }
-
-  // Cloudflare AI Gateway: account ID + gateway ID
-  if (data.provider === 'cloudflare') {
-    if (data.cloudflareAccountId) args.push('--cloudflare-ai-gateway-account-id', data.cloudflareAccountId);
-    if (data.cloudflareGatewayId) args.push('--cloudflare-ai-gateway-gateway-id', data.cloudflareGatewayId);
-  }
-
   return args;
 }
 
-// ─── CLI runner ─────────────────────────────────────────────────────
-
-const OPENCLAW_ENV = {
-  ...process.env,
-  HOME: DATA_DIR,
-  OPENCLAW_STATE_DIR: OPENCLAW_HOME,
-};
-
-/**
- * Spawns `node $OPENCLAW_ENTRY <args>` and returns { code, output }.
- * Invoking entry.js directly (rather than the bin wrapper) is more reliable
- * in containers and matches the reference Railway template's approach.
- */
-export function runOpenclaw(args, timeoutMs = 60_000) {
-  return new Promise((resolve) => {
-    const proc = spawn(OPENCLAW_NODE, [OPENCLAW_ENTRY, ...args], {
-      env: OPENCLAW_ENV,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let out = '';
-    proc.stdout?.on('data', (d) => { out += d.toString('utf8'); });
-    proc.stderr?.on('data', (d) => { out += d.toString('utf8'); });
-
-    const timer = setTimeout(() => {
-      proc.kill('SIGTERM');
-      out += '\n[timeout] openclaw command timed out\n';
-    }, timeoutMs);
-
-    proc.on('error', (err) => {
-      clearTimeout(timer);
-      out += `\n[spawn error] ${String(err)}\n`;
-      resolve({ code: 127, output: out });
-    });
-
-    proc.on('close', (code) => {
-      clearTimeout(timer);
-      resolve({ code: code ?? 0, output: out });
-    });
+export async function ensureProviderPlugins(data = {}, options = {}) {
+  return ensureRequiredPlugins({
+    config: await config.readConfig() || {}, payload: data.provider ? toAuthPayload(data) : {},
+    openclawRoot, stateDir: OPENCLAW_HOME, version: PINNED_OPENCLAW_VERSION,
+    runCli: args => runCli(args, { ...options, timeoutMs: 300_000 }),
   });
 }
 
-/**
- * Strip ANSI escape sequences and OSC hyperlinks from PTY output so the
- * streamed text reads cleanly in the browser without needing a terminal
- * emulator on the client side.
- */
-export function stripAnsi(value) {
-  return String(value)
-    .replace(/\x1b\]8;;.*?\x1b\\|\x1b\]8;;\x1b\\/g, '')
-    .replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '');
+export async function verifyProviderPersistence(data, options = {}) {
+  const payload = toAuthPayload(data);
+  // Only credential presence is needed by this read-only SDK inspection.
+  payload.authSecret = payload.authSecret ? 'provided' : '';
+  const result = await runSdk('verify-provider', {
+    ...options, options: { payload, openclawRoot, stateDir: OPENCLAW_HOME, configPath: OPENCLAW_CONFIG_PATH },
+  });
+  if (!result?.ok) throw new Error(result?.error || 'Provider credentials were not persisted');
+  return result;
 }
 
-/**
- * Drop transient spinner/progress lines that openclaw redraws over
- * carriage returns. Without this filter the browser <pre> accumulates
- * hundreds of "Waiting for device authorization..." lines and the user
- * loses track of the device-code URL and pairing code (matches reference
- * template's cleanPtyOutput).
- */
-function isTransientProgressLine(line) {
-  return /^[\s◐◓◑◒⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏.-]*(Requesting device code|Waiting for device authorization|Exchanging device code)/.test(line);
+export function runOpenclaw(args, options = {}) {
+  return runCli(args, typeof options === 'number' ? { timeoutMs: options } : options);
+}
+
+export function stripAnsi(value) {
+  return String(value).replace(/\x1b\]8;;.*?\x1b\\|\x1b\]8;;\x1b\\/g, '').replace(/\x1b\[[\x20-\x3f]*[\x40-\x7e]/g, '');
 }
 
 export function cleanPtyOutput(value) {
-  const cleaned = stripAnsi(value)
-    .split(/\r|\n/)
-    .filter((line) => line && !isTransientProgressLine(line))
-    .join('\n');
+  const cleaned = stripAnsi(value).split(/\r|\n/).filter(line => line && !/^[\s◐◓◑◒⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏.-]*(Requesting device code|Waiting for device authorization|Exchanging device code)/.test(line)).join('\n');
   return cleaned ? cleaned + '\n' : '';
 }
 
-/**
- * Spawn `node $OPENCLAW_ENTRY <args>` under a pseudo-terminal so openclaw
- * thinks it's running interactively. Used for OAuth/device-code onboarding
- * where openclaw prints a login URL + code and waits for the user to
- * complete browser authentication.
- *
- * Calls onOutput(chunk) for every output chunk (ANSI-stripped) and resolves
- * with { code, output } when the process exits.
- *
- * autoInputs: array of { pattern: RegExp, input: string } — when accumulated
- *   output matches `pattern`, we send `input` to the PTY (used to auto-answer
- *   non-OAuth prompts like "Enable hooks?").
- */
-export function runOpenclawPty(args, opts = {}) {
-  return new Promise((resolve) => {
-    const { onOutput, autoInputs = [] } = opts;
-    const sentAutoInputs = new Set();
-    let out = '';
-    let proc;
-
+/** Bounded interactive device-code flow, with chunk-safe credential redaction. */
+export function runOpenclawPty(args, options = {}) {
+  return new Promise(resolve => {
+    let proc, timer, killTimer, reason, finished = false, raw = '', output = '', pendingDisplay = '';
+    const emitLine = line => {
+      const chunk = cleanPtyOutput(line);
+      if (chunk) { output = (output + chunk).slice(-4 * 1024 * 1024); options.onOutput?.(chunk); }
+    };
+    const sent = new Set();
+    const filter = createOutputFilter([OPENCLAW_GATEWAY_TOKEN, WRAPPER_ADMIN_PASSWORD, ...(options.secrets || [])], chunk => {
+      pendingDisplay += chunk;
+      const lines = pendingDisplay.split(/\r|\n/);
+      pendingDisplay = lines.pop();
+      for (const line of lines) emitLine(line);
+      if (pendingDisplay.length > 64 * 1024) { emitLine(pendingDisplay.slice(0, -16 * 1024)); pendingDisplay = pendingDisplay.slice(-16 * 1024); }
+    });
+    const finish = code => {
+      if (finished) return;
+      finished = true; clearTimeout(timer); clearTimeout(killTimer);
+      options.signal?.removeEventListener('abort', abort);
+      if (reason) filter.write(`\n[${reason}] onboarding did not complete\n`);
+      filter.end(); if (pendingDisplay) emitLine(pendingDisplay); pendingDisplay = ''; resolve({ code: reason === 'timeout' ? 124 : reason ? 130 : code, output });
+    };
+    const stop = why => {
+      if (finished || reason) return;
+      reason = why;
+      try { proc?.kill('SIGTERM'); } catch {}
+      killTimer = setTimeout(() => { try { proc?.kill('SIGKILL'); } catch {} }, options.killAfterMs || 2_000);
+    };
+    const abort = () => stop('aborted');
+    if (options.signal?.aborted) { reason = 'aborted'; finish(130); return; }
     try {
-      proc = pty.spawn(OPENCLAW_NODE, [OPENCLAW_ENTRY, ...args], {
-        name: 'xterm-color',
-        cols: 100,
-        rows: 30,
-        cwd: process.cwd(),
-        env: {
-          ...OPENCLAW_ENV,
-          // Force openclaw's *local* device-code branch so the short code
-          // is printed in stdout instead of being hidden behind a remote-only
-          // OAuth redirect (matches reference template).
-          DISPLAY: process.env.DISPLAY || ':0',
-          WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY || 'wayland-0',
-          SSH_CLIENT: '',
-          SSH_TTY: '',
-          SSH_CONNECTION: '',
-          FORCE_COLOR: '0',
-          NO_COLOR: '1',
-        },
+      proc = (options.spawnPty || pty.spawn)(OPENCLAW_NODE, [OPENCLAW_ENTRY, ...args], {
+        name: 'xterm-color', cols: 100, rows: 30, cwd: process.cwd(),
+        env: openclawEnvironment({ DISPLAY: ':0', WAYLAND_DISPLAY: 'wayland-0', SSH_CLIENT: '', SSH_TTY: '', SSH_CONNECTION: '', FORCE_COLOR: '0', NO_COLOR: '1' }),
       });
-    } catch (err) {
-      const msg = `\n[spawn error] ${String(err)}\n`;
-      onOutput?.(msg);
-      return resolve({ code: 127, output: msg });
-    }
-
-    proc.onData((data) => {
-      // Two passes:
-      //  1. Filtered chunk for the user — drops spinner spam so URL/code stay visible
-      //  2. Raw stripped chunk for autoInputs pattern matching (must keep all output
-      //     so prompts that briefly appear are detected)
-      const filtered = cleanPtyOutput(data);
-      const raw = stripAnsi(data);
-      out += raw;
-
-      for (const { input, pattern } of autoInputs) {
-        const key = String(pattern);
-        if (sentAutoInputs.has(key) || !pattern.test(out)) continue;
-        sentAutoInputs.add(key);
-        proc.write(input);
+    } catch (err) { filter.write(`\n[spawn error] ${err.message}\n`); finish(127); return; }
+    proc.onData(data => {
+      raw = (raw + stripAnsi(data)).slice(-64 * 1024);
+      for (const {pattern, input} of options.autoInputs || []) {
+        if (!sent.has(String(pattern)) && pattern.test(raw)) { sent.add(String(pattern)); proc.write(input); }
       }
-
-      if (filtered) onOutput?.(filtered);
+      // Redact before adding display line breaks; otherwise a secret split by
+      // PTY chunks could be exposed as two separately rendered fragments.
+      filter.write(stripAnsi(data));
     });
-
-    proc.onExit(({ exitCode }) => {
-      resolve({ code: exitCode ?? 0, output: out });
-    });
+    proc.onExit(({exitCode, signal}) => finish(exitCode ?? (signal ? 128 : 1)));
+    timer = setTimeout(() => stop('timeout'), options.timeoutMs ?? 15 * 60_000);
+    options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) abort();
   });
 }
 
-// ─── Convenience wrappers ───────────────────────────────────────────
-
-export async function runConfigSet(key, value) {
-  const result = await runOpenclaw(['config', 'set', key, value]);
-  if (result.code !== 0) {
-    log.warn(`config set ${key} failed (exit=${result.code}): ${result.output}`);
-  }
+async function checked(args, label, options) {
+  const result = await runCli(args, options);
+  if (result.code !== 0) throw new Error(`${label} failed (exit ${result.code})`);
   return result;
 }
-
-export async function runConfigSetJson(key, value) {
-  // `--strict-json` is the canonical flag in 2026.6.x; `--json` is now only a
-  // deprecated legacy alias for it and may be removed in a future release.
-  const result = await runOpenclaw([
-    'config', 'set', '--strict-json', key, JSON.stringify(value),
-  ]);
-  if (result.code !== 0) {
-    log.warn(`config set --strict-json ${key} failed (exit=${result.code}): ${result.output}`);
-  }
-  return result;
-}
-
-export async function runModelsSet(model) {
-  const result = await runOpenclaw(['models', 'set', model]);
-  if (result.code !== 0) {
-    log.warn(`models set ${model} failed (exit=${result.code}): ${result.output}`);
-  }
-  return result;
-}
+export const runConfigSet = (key, value, options = {}) => checked(['config', 'set', key, value], `Configuring ${key}`, options);
+export const runConfigSetJson = (key, value, options = {}) => checked(['config', 'set', '--strict-json', key, JSON.stringify(value)], `Configuring ${key}`, options);
+export const runModelsSet = (model, options = {}) => checked(['models', 'set', model], 'Setting the model', options);

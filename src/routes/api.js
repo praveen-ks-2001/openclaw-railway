@@ -19,53 +19,86 @@
  */
 
 import { Router } from 'express';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import fs from 'fs/promises';
 import { config } from '../config/index.js';
 import { OPENCLAW_GATEWAY_TOKEN } from '../config/index.js';
 import { gatewayManager } from '../services/gatewayManager.js';
 import { pairingService } from '../services/pairingService.js';
-import { getActiveSessionCount } from '../services/terminalService.js';
+import { getActiveSessionCount, stopAllTerminalSessions } from '../services/terminalService.js';
 import { getVersionInfo } from '../utils/version.js';
 import { requireAdminAuth } from '../middleware/auth.js';
-import { log } from '../utils/log.js';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { readEditableConfig, updateEditableConfig } from '../services/configEditor.js';
+import { withExclusiveOperation, getOperationState, getBootFailure } from '../services/operations.js';
 
 export const apiRoutes = Router();
+
+const WRAPPER_API_PATHS = new Set([
+  '/status', '/admin/status', '/logs', '/logs/stream', '/events',
+  '/gateway/restart', '/gateway/stop', '/config',
+  '/pairing/pending', '/pairing/paired', '/pairing/approve',
+  '/pairing/reject', '/pairing/revoke', '/pairing/stream', '/setup-ui',
+]);
+
+/** Paths relative to /api. Match Express's default case/trailing-slash policy. */
+export function isWrapperApiPath(pathname) {
+  return typeof pathname === 'string' && WRAPPER_API_PATHS.has(pathname.replace(/\/$/, '').toLowerCase());
+}
+
+// OpenClaw owns additional /api routes, including bearer/capability downloads.
+// Leave their authentication, credentials, response headers and payloads alone.
+apiRoutes.use((req, _res, next) => {
+  if (!isWrapperApiPath(req.path)) return next('router');
+  next();
+});
 
 // ── Public endpoints (no auth) — needed for Railway healthcheck ───
 // These must be registered BEFORE the requireAdminAuth middleware.
 
-apiRoutes.get('/status', async (req, res) => {
-  let aiProvider = null;
-  try {
-    const cfg = await config.readConfig();
-    if (cfg?.agents?.defaults?.model?.primary) {
-      aiProvider = cfg.agents.defaults.model.primary;
-    }
-  } catch {}
-  res.json({
+async function statusDetails(privileged = false) {
+  let cfg = null;
+  try { cfg = await config.readConfig(); } catch { /* status and recovery remain available for invalid config */ }
+  const result = {
     state: gatewayManager.getState(),
     running: gatewayManager.isRunning(),
-    configured: true,
+    configured: Boolean(cfg) && await config.isAlreadyConfigured(),
     uptime: process.uptime(),
-    terminalSessions: getActiveSessionCount(),
-    gatewayToken: OPENCLAW_GATEWAY_TOKEN || null,
-    aiProvider,
     version: getVersionInfo(),
     ts: new Date().toISOString(),
-  });
+  };
+  if (privileged) {
+    const savedToken = cfg?.gateway?.auth?.token;
+    result.gatewayToken = OPENCLAW_GATEWAY_TOKEN || (typeof savedToken === 'string' ? savedToken : null);
+    result.aiProvider = cfg?.agents?.defaults?.model?.primary || null;
+    result.terminalSessions = getActiveSessionCount();
+    result.operation = getOperationState();
+    result.bootFailure = getBootFailure();
+  }
+  return result;
+}
+
+apiRoutes.get('/status', async (req, res, next) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    const details = await statusDetails();
+    res.status(getBootFailure() || (details.configured && !details.running) ? 503 : 200).json(details);
+  } catch (error) { next(error); }
 });
 
-// ── Protected routes — everything below requires admin auth ────────
+// Only the wrapper management endpoints below require wrapper admin auth.
 apiRoutes.use(requireAdminAuth);
+apiRoutes.use((req, res, next) => { res.setHeader('Cache-Control', 'no-store'); next(); });
+apiRoutes.get('/admin/status', async (req, res, next) => {
+  try { res.json(await statusDetails(true)); } catch (error) { next(error); }
+});
+
+function errorResponse(res, error) {
+  const status = Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599 ? error.status : 500;
+  return res.status(status).json({ ok: false, error: error.message || 'The operation failed.' });
+}
 
 // ── Logs ──────────────────────────────────────────────────────────
 
 apiRoutes.get('/logs', (req, res) => {
-  const n = Math.min(parseInt(req.query.lines || '100', 10), 500);
+  const n = Math.max(1, Math.min(parseInt(req.query.lines || '100', 10) || 100, 500));
   res.json({ logs: gatewayManager.getLogs(n) });
 });
 
@@ -124,57 +157,47 @@ apiRoutes.get('/events', (req, res) => {
 
 apiRoutes.post('/gateway/restart', async (req, res) => {
   try {
-    await gatewayManager.restart();
-    res.json({ ok: true, message: 'Gateway restarting...' });
+    await withExclusiveOperation('restart-gateway', async () => { await stopAllTerminalSessions(); await gatewayManager.restart(); });
+    res.json({ ok: true, message: 'Gateway restarted and startup verified.' });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    errorResponse(res, err);
   }
 });
 
 apiRoutes.post('/gateway/stop', async (req, res) => {
   try {
-    await gatewayManager.stop();
+    await withExclusiveOperation('stop-gateway', async () => { await stopAllTerminalSessions(); await gatewayManager.stop(); });
     res.json({ ok: true, message: 'Gateway stopped.' });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    errorResponse(res, err);
   }
 });
 
 // ── Config ────────────────────────────────────────────────────────
 
 apiRoutes.get('/config', async (req, res) => {
-  const cfg = await config.readConfig();
-  if (!cfg) return res.status(404).json({ ok: false, error: 'No config found' });
-  // Strip sensitive fields before returning
-  res.json({ ok: true, config: sanitizeConfigForDisplay(cfg) });
+  try { res.json({ ok: true, ...await readEditableConfig() }); } catch (error) { errorResponse(res, error); }
 });
 
 apiRoutes.post('/config', async (req, res) => {
   try {
-    const incoming = req.body;
-    if (!incoming || typeof incoming !== 'object') {
-      return res.status(400).json({ ok: false, error: 'Invalid config body' });
-    }
-    await config.writeConfig(incoming);
-    log.info('Config updated via API — openclaw will hot-reload');
-    res.json({ ok: true, message: 'Config written. Hot reload in progress...' });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
+    const result = await updateEditableConfig(req.body?.config, req.body?.revision);
+    res.json({ ok: true, ...result });
+  } catch (error) { errorResponse(res, error); }
 });
 
 // ── Device Pairing ────────────────────────────────────────────────
 
 /**
  * List pending pairing requests
- * Reads from ~/.openclaw/nodes/pending.json
+ * Uses the public SDK in an isolated worker; no legacy file fallback.
  */
 apiRoutes.get('/pairing/pending', async (req, res) => {
   try {
     const pending = await pairingService.getPending();
     res.json({ ok: true, pending });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    errorResponse(res, err);
   }
 });
 
@@ -183,7 +206,7 @@ apiRoutes.get('/pairing/pending', async (req, res) => {
  * Calls: openclaw devices approve <requestId>
  */
 apiRoutes.post('/pairing/approve', async (req, res) => {
-  const { requestId } = req.body;
+  const { requestId } = req.body || {};
   if (!requestId) {
     return res.status(400).json({ ok: false, error: 'requestId required' });
   }
@@ -191,7 +214,7 @@ apiRoutes.post('/pairing/approve', async (req, res) => {
     await pairingService.approve(requestId);
     res.json({ ok: true, message: `Request ${requestId} approved` });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    errorResponse(res, err);
   }
 });
 
@@ -199,7 +222,7 @@ apiRoutes.post('/pairing/approve', async (req, res) => {
  * Reject a pending pair request
  */
 apiRoutes.post('/pairing/reject', async (req, res) => {
-  const { requestId } = req.body;
+  const { requestId } = req.body || {};
   if (!requestId) {
     return res.status(400).json({ ok: false, error: 'requestId required' });
   }
@@ -207,7 +230,7 @@ apiRoutes.post('/pairing/reject', async (req, res) => {
     await pairingService.reject(requestId);
     res.json({ ok: true, message: `Request ${requestId} rejected` });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    errorResponse(res, err);
   }
 });
 
@@ -215,15 +238,15 @@ apiRoutes.post('/pairing/reject', async (req, res) => {
  * Revoke a paired device token
  */
 apiRoutes.post('/pairing/revoke', async (req, res) => {
-  const { deviceId, role } = req.body;
-  if (!deviceId || !role) {
-    return res.status(400).json({ ok: false, error: 'deviceId and role required' });
+  const { deviceId, role } = req.body || {};
+  if (!deviceId) {
+    return res.status(400).json({ ok: false, error: 'deviceId required' });
   }
   try {
     await pairingService.revoke(deviceId, role);
     res.json({ ok: true, message: `Device ${deviceId} revoked` });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    errorResponse(res, err);
   }
 });
 
@@ -235,7 +258,7 @@ apiRoutes.get('/pairing/paired', async (req, res) => {
     const paired = await pairingService.getPaired();
     res.json({ ok: true, paired });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    errorResponse(res, err);
   }
 });
 
@@ -245,30 +268,3 @@ apiRoutes.get('/setup-ui', (req, res) => {
   // Redirect to the main setup page
   res.redirect('/setup');
 });
-
-// ─── Helpers ──────────────────────────────────────────────────────
-
-function sanitizeConfigForDisplay(cfg) {
-  // Deep clone then redact obvious secrets
-  const clone = JSON.parse(JSON.stringify(cfg));
-
-  const REDACTED = '[redacted]';
-  const SENSITIVE_KEYS = new Set([
-    'botToken', 'token', 'appToken', 'apiKey', 'password',
-    'serviceAccount', 'secret', 'key', 'auth',
-  ]);
-
-  function redact(obj) {
-    if (typeof obj !== 'object' || obj === null) return obj;
-    for (const k of Object.keys(obj)) {
-      if (SENSITIVE_KEYS.has(k) && typeof obj[k] === 'string') {
-        obj[k] = REDACTED;
-      } else {
-        redact(obj[k]);
-      }
-    }
-    return obj;
-  }
-
-  return redact(clone);
-}
