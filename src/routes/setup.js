@@ -1,372 +1,239 @@
-/**
- * routes/setup.js
- *
- * GET  /setup       — serve the setup UI HTML
- * POST /setup/save  — write config + launch gateway
- */
-
+/** Existing setup/download contracts with serialized, authenticated state owners. */
 import { Router } from 'express';
-import path from 'path';
-import os from 'os';
-import { fileURLToPath } from 'url';
-import fs from 'fs/promises';
-import { createReadStream } from 'fs';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import { config, DATA_DIR, OPENCLAW_HOME, OPENCLAW_GATEWAY_TOKEN, WRAPPER_ADMIN_PASSWORD, OLLAMA_BASE_URL, OPENCLAW_ENTRY, OPENCLAW_NODE } from '../config/index.js';
+import path from 'node:path';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
+import fs from 'node:fs/promises';
+import { config, atomicWrite, OPENCLAW_HOME, WORKSPACE_DIR, SETUP_INCOMPLETE_PATH, OPENCLAW_GATEWAY_TOKEN, WRAPPER_ADMIN_PASSWORD, OLLAMA_BASE_URL, PORT } from '../config/index.js';
+import { adoptVerifiedSetup, forgetResetRecovery } from '../services/upgradeService.js';
 import { gatewayManager } from '../services/gatewayManager.js';
+import { pairingService } from '../services/pairingService.js';
+import { stopAllTerminalSessions } from '../services/terminalService.js';
+import { withExclusiveOperation } from '../services/operations.js';
+import { requireAdminAuth } from '../middleware/auth.js';
 import {
-  buildOnboardArgs, runOpenclaw, runOpenclawPty,
-  runConfigSet, runConfigSetJson, runModelsSet,
-  isOauthRequest,
+  buildOnboardArgs, runOpenclaw, runOpenclawPty, runConfigSet, runConfigSetJson,
+  runModelsSet, isOauthRequest, ensureProviderPlugins, verifyProviderPersistence,
 } from '../services/onboardBuilder.js';
+import { runCommand } from '../core/command-runner.js';
+import { migrateWrapperConfig } from '../core/config-migration.js';
+import { createNormalizedSnapshot } from '../core/state-backup.js';
+import { inspectZipArchive } from '../core/state-transfer.js';
 import { validateSetupForm } from '../utils/validation.js';
 import { log } from '../utils/log.js';
 
-const execFileAsync = promisify(execFile);
-
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
 export const setupRoutes = Router();
+setupRoutes.use(requireAdminAuth);
 
-// ── GET /setup — redirect to / if gateway already running ──────────
-
-setupRoutes.get('/', async (req, res) => {
-  if (gatewayManager.isRunning()) {
-    return res.redirect('/');
-  }
-  // Serve the setup UI HTML (built separately, or served inline)
-  const htmlPath = path.join(__dirname, '../../public/setup.html');
-  try {
-    await fs.access(htmlPath);
-    res.sendFile(htmlPath);
-  } catch {
-    // Fallback: redirect to embedded inline setup
-    res.redirect('/api/setup-ui');
-  }
-});
-
-// ── POST /setup/save — write config and launch ─────────────────────
-
-// ── GET /setup/api/ollama-config — return OLLAMA_BASE_URL env var ──
-// Used by the setup page to pre-fill the Ollama URL field on load.
-
-setupRoutes.get('/api/ollama-config', (req, res) => {
-  res.json({ ollamaBaseUrl: OLLAMA_BASE_URL || null });
-});
-
-// ── GET /setup/api/ollama-models — fetch model list from Ollama ────
-// Proxies to {url}/api/tags and returns the list of pulled model names.
-// Query param: url (the Ollama base URL entered by the user).
-
-setupRoutes.get('/api/ollama-models', async (req, res) => {
-  const baseUrl = (req.query.url || OLLAMA_BASE_URL || '').trim().replace(/\/$/, '');
-  if (!baseUrl) {
-    return res.status(400).json({ error: 'No Ollama URL provided' });
-  }
-  if (!/^https?:\/\/.+/.test(baseUrl)) {
-    return res.status(400).json({ error: 'URL must start with http:// or https://' });
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    const r = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal });
-    clearTimeout(timeout);
-    if (!r.ok) {
-      return res.status(502).json({ error: `Ollama returned HTTP ${r.status}` });
-    }
-    const json = await r.json();
-    const models = (json.models || []).map((m) => m.name);
-    res.json({ models });
-  } catch (err) {
-    const msg = err.name === 'AbortError'
-      ? 'Request timed out — is the Ollama URL correct and reachable?'
-      : `Could not reach Ollama: ${err.message}`;
-    res.status(502).json({ error: msg });
-  }
-});
-
-// ── POST /setup/save — write config + launch gateway ───────────────
-//
-// Two response modes:
-//   • API-key flow → JSON response
-//   • OAuth flow   → text/plain stream so the user can see the device-code URL
-//                    that openclaw prints during interactive onboarding
-
-async function applyPostOnboardConfig(data, stream) {
-  const log_ = (msg) => stream ? stream(msg + '\n') : log.info(msg);
-
-  log_('Patching gateway config...');
-  await runConfigSet('gateway.controlUi.allowInsecureAuth', 'true');
-  if (OPENCLAW_GATEWAY_TOKEN) {
-    await runConfigSet('gateway.auth.token', OPENCLAW_GATEWAY_TOKEN);
-  }
-  await runConfigSetJson('gateway.trustedProxies', ['127.0.0.1', '::1']);
-  await runConfigSetJson('gateway.controlUi.allowedOrigins', ['*']);
-
-  if (data.model) {
-    log_(`Setting model to ${data.model}...`);
-    await runModelsSet(data.model);
-  }
-
-  if (data.telegramBotToken) {
-    log_('Configuring Telegram channel...');
-    await runConfigSetJson('channels.telegram', {
-      enabled: true,
-      botToken: data.telegramBotToken,
-      dmPolicy: data.telegramDmPolicy || 'pairing',
-      groupPolicy: 'open',
-      streaming: { mode: 'partial' },
-      ...(data.telegramAllowFrom
-        ? { allowFrom: data.telegramAllowFrom.split(/[,\n]/).map(s => s.trim()).filter(Boolean) }
-        : {}),
-      ...(data.telegramWebhookUrl ? { webhookUrl: data.telegramWebhookUrl } : {}),
-    });
-  }
-
-  if (data.discordBotToken) {
-    log_('Configuring Discord channel...');
-    await runConfigSetJson('channels.discord', {
-      enabled: true,
-      token: data.discordBotToken,
-      groupPolicy: 'open',
-      dm: { policy: data.discordDmPolicy || 'pairing' },
-      ...(data.discordAllowFrom
-        ? { allowFrom: data.discordAllowFrom.split(/[,\n]/).map(s => s.trim()).filter(Boolean) }
-        : {}),
-    });
-  }
-
-  if (data.slackBotToken && data.slackAppToken) {
-    log_('Configuring Slack channel...');
-    await runConfigSetJson('channels.slack', {
-      enabled: true,
-      botToken: data.slackBotToken,
-      appToken: data.slackAppToken,
-    });
-  }
-
-  if (data.googleChatServiceAccount) {
-    await runConfigSetJson('channels.googlechat', {
-      serviceAccount: data.googleChatServiceAccount,
-    });
-  }
-
-  if (data.mattermostUrl && data.mattermostToken) {
-    await runConfigSetJson('channels.mattermost', {
-      url: data.mattermostUrl,
-      token: data.mattermostToken,
-      ...(data.mattermostTeam ? { team: data.mattermostTeam } : {}),
-    });
-  }
-
-  if (data.sessionScope) {
-    const session = { dmScope: data.sessionScope };
-    if (data.sessionResetMode && data.sessionResetMode !== 'off') {
-      session.reset = {
-        mode: data.sessionResetMode,
-        ...(data.sessionResetHour ? { atHour: parseInt(data.sessionResetHour, 10) } : {}),
-      };
-    }
-    await runConfigSetJson('session', session);
-  }
+const route = handler => (req, res, next) => Promise.resolve(handler(req, res)).catch(next);
+const failure = (res, error) => {
+  if (!res.headersSent && !res.destroyed) res.status(error.statusCode || error.status || 500).json({ ok: false, error: error.message });
+};
+const secretValues = data => [data.apiKey, data.telegramBotToken, data.discordBotToken, data.slackBotToken, data.slackAppToken, data.mattermostToken, data.googleChatServiceAccount].filter(Boolean);
+const redact = (text, secrets = []) => {
+  for (const value of [OPENCLAW_GATEWAY_TOKEN, WRAPPER_ADMIN_PASSWORD, ...secrets].filter(Boolean)) text = String(text).split(value).join('[REDACTED]');
+  return String(text);
+};
+function listAllowed(raw, policy) {
+  const values = (raw || '').split(/[,\n]/).map(s => s.trim()).filter(Boolean);
+  return policy === 'open' ? [...new Set([...values, '*'])] : values;
 }
 
-setupRoutes.post('/save', async (req, res) => {
-  if (gatewayManager.isRunning() || gatewayManager.getState() === 'starting') {
-    return res.status(409).json({
-      ok: false,
-      error: 'Gateway is already running or starting. Use /api/config to update config.',
-    });
-  }
+setupRoutes.get('/', route(async (_req, res) => {
+  if (gatewayManager.isRunning()) return res.redirect('/');
+  res.sendFile(path.join(__dirname, '../../public/setup.html'));
+}));
+setupRoutes.get('/api/ollama-config', (_req, res) => res.json({ ollamaBaseUrl: OLLAMA_BASE_URL || null }));
+setupRoutes.get('/api/ollama-models', route(async (req, res) => {
+  const input = typeof req.query.url === 'string' ? req.query.url : OLLAMA_BASE_URL || '';
+  let base;
+  try {
+    base = new URL(input.trim());
+    if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.hash) throw new Error();
+  } catch { return res.status(400).json({ error: 'Provide an HTTP(S) Ollama URL without embedded credentials.' }); }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5_000);
+  try {
+    const response = await fetch(`${base.href.replace(/\/$/, '')}/api/tags`, { signal: controller.signal });
+    if (!response.ok) return res.status(502).json({ error: `Ollama returned HTTP ${response.status}` });
+    const json = await response.json();
+    res.json({ models: (Array.isArray(json.models) ? json.models : []).map(m => m.name).filter(name => typeof name === 'string') });
+  } catch (error) { res.status(502).json({ error: error.name === 'AbortError' ? 'Request timed out — check that your Ollama URL is reachable.' : 'Could not reach the Ollama server.' }); }
+  finally { clearTimeout(timer); }
+}));
 
-  const { errors, data } = validateSetupForm(req.body);
-  if (errors.length > 0) {
-    return res.status(400).json({ ok: false, errors });
+export async function applyPostOnboardConfig(data, options = {}) {
+  const emit = options.onOutput || (() => {});
+  emit('Configuring gateway settings...\n');
+  const patched = migrateWrapperConfig(await config.readConfig(), { publicDomain: process.env.RAILWAY_PUBLIC_DOMAIN?.trim(), localPort: PORT });
+  await config.writeConfig(patched);
+  await runConfigSet('gateway.auth.token', OPENCLAW_GATEWAY_TOKEN, options);
+  if (data.model && !['ollama', 'vllm', 'sglang', 'custom', 'groq'].includes(data.provider)) await runModelsSet(data.model, options);
+  if (data.telegramBotToken) {
+    await runConfigSetJson('channels.telegram', {
+      enabled: true, botToken: data.telegramBotToken, dmPolicy: data.telegramDmPolicy || 'pairing',
+      groupPolicy: 'open', streaming: { mode: 'partial' },
+      ...(listAllowed(data.telegramAllowFrom, data.telegramDmPolicy).length ? {allowFrom: listAllowed(data.telegramAllowFrom, data.telegramDmPolicy)} : {}),
+      ...(data.telegramWebhookUrl ? {webhookUrl: data.telegramWebhookUrl} : {}),
+    }, options);
   }
+  if (data.discordBotToken) {
+    await runConfigSetJson('channels.discord', {
+      enabled: true, token: data.discordBotToken, groupPolicy: 'open', dmPolicy: data.discordDmPolicy || 'pairing',
+      ...(listAllowed(data.discordAllowFrom, data.discordDmPolicy).length ? {allowFrom: listAllowed(data.discordAllowFrom, data.discordDmPolicy)} : {}),
+    }, options);
+  }
+  if (data.slackBotToken && data.slackAppToken) {
+    await runConfigSetJson('channels.slack', {
+      enabled: true, botToken: data.slackBotToken, appToken: data.slackAppToken, dmPolicy: data.slackDmPolicy || 'pairing',
+      ...(data.slackDmPolicy === 'open' ? { allowFrom: ['*'] } : {}),
+    }, options);
+  }
+  if (data.mattermostUrl && data.mattermostToken) {
+    await runConfigSetJson('channels.mattermost', { enabled: true, baseUrl: data.mattermostUrl, botToken: data.mattermostToken }, options);
+  }
+  if (data.sessionScope) {
+    await runConfigSetJson('session', {
+      dmScope: data.sessionScope,
+      ...(data.sessionResetMode && data.sessionResetMode !== 'off' ? {reset: {mode: data.sessionResetMode, ...(data.sessionResetHour ? {atHour: Number(data.sessionResetHour)} : {})}} : {}),
+    }, options);
+  }
+  const validate = await runOpenclaw(['config', 'validate', '--json'], options);
+  if (validate.code !== 0) throw new Error('The saved configuration did not pass OpenClaw validation. Setup has not completed.');
+  await verifyProviderPersistence(data, options);
+}
 
+setupRoutes.post('/save', route(async (req, res) => {
+  const {errors, data} = validateSetupForm(req.body);
+  if (errors.length) return res.status(400).json({ok: false, errors});
   const interactive = isOauthRequest(data);
-  const onboardArgs = buildOnboardArgs(data);
-  log.info(`Running: openclaw ${onboardArgs.join(' ').replace(/--\S+-api-key\s+\S+/g, '--***-api-key ***')}`);
-
-  // ─── OAuth flow: stream PTY output to the browser ─────────────────
-  if (interactive) {
-    res.set({
-      'Content-Type': 'text/plain; charset=utf-8',
-      'Cache-Control': 'no-cache',
-      'X-Accel-Buffering': 'no', // disable nginx buffering if any
-    });
-    const stream = (chunk) => { if (chunk) res.write(chunk); };
-
-    try {
-      stream('Starting OAuth onboarding. A device-code URL will appear below — open it in your browser to sign in.\n\n');
-
-      const onboard = await runOpenclawPty(onboardArgs, {
-        onOutput: stream,
-        autoInputs: [{ pattern: /Enable hooks\?/, input: ' \r' }],
-      });
-
-      stream(`\n[onboard] exit=${onboard.code} configured=${await config.isAlreadyConfigured()}\n`);
-
-      if (onboard.code !== 0 || !(await config.isAlreadyConfigured())) {
-        stream('\n[setup] Onboarding failed. Review the output above.\n');
-        return res.end();
+  const controller = new AbortController();
+  const close = () => { if (!res.writableEnded) controller.abort(); };
+  res.once('close', close);
+  const stream = chunk => { if (chunk && !res.destroyed && !res.writableEnded) res.write(chunk); };
+  try {
+    await withExclusiveOperation('setup', async ({signal: operationSignal} = {}) => {
+      if (gatewayManager.isRunning() || gatewayManager.getState() === 'starting' || await config.isAlreadyConfigured()) {
+        const error = new Error('This installation is already configured. Use Admin settings or Reset configuration to rerun setup.'); error.statusCode = 409; throw error;
       }
-
-      await applyPostOnboardConfig(data, stream);
-
-      stream('\nLaunching gateway...\n');
-      gatewayManager.start().catch((err) => {
-        log.error('Gateway failed to start after setup:', err.message);
-        stream(`[gateway] start error: ${err.message}\n`);
-      });
-
-      stream('\n[setup] Complete. You can close this page and visit /admin to manage your gateway.\n');
-      return res.end();
-    } catch (err) {
-      log.error('OAuth setup failed:', err);
-      stream(`\n[setup] Internal error: ${err.message}\n`);
-      return res.end();
-    }
-  }
-
-  // ─── API-key flow: regular JSON response ──────────────────────────
-  try {
-    const onboard = await runOpenclaw(onboardArgs);
-    log.info(`Onboard exit=${onboard.code} configured=${await config.isAlreadyConfigured()}`);
-
-    if (onboard.code !== 0 || !(await config.isAlreadyConfigured())) {
-      log.error('Onboard failed:', onboard.output);
-      return res.status(500).json({
-        ok: false,
-        error: `Onboard failed (exit ${onboard.code}). Check logs for details.`,
-        output: onboard.output,
-      });
-    }
-
-    log.info('Onboard succeeded. Patching gateway config...');
-    await applyPostOnboardConfig(data, null);
-
-    log.info('Config complete. Launching OpenClaw gateway...');
-    gatewayManager.start().catch((err) => {
-      log.error('Gateway failed to start after setup:', err.message);
-    });
-
-    res.json({ ok: true, message: 'Config saved. Gateway launching...' });
-  } catch (err) {
-    log.error('Setup failed:', err);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-
-// ── POST /setup/pairing/approve — approve a channel pairing code ────
-
-setupRoutes.post('/pairing/approve', async (req, res) => {
-  const { channel, code } = req.body || {};
-  if (!channel || !code) {
-    return res.status(400).json({ ok: false, error: 'Missing channel or code' });
-  }
-
-  try {
-    const env = { ...process.env, HOME: DATA_DIR, OPENCLAW_STATE_DIR: OPENCLAW_HOME };
-    // `pairing approve` mutates local state; it does NOT make a gateway RPC,
-    // so passing --token is unnecessary and triggers the WS scope check bug.
-    const args = [OPENCLAW_ENTRY, 'pairing', 'approve', String(channel), String(code)];
-
-    const { stdout } = await execFileAsync(OPENCLAW_NODE, args, { env, timeout: 30_000 });
-    log.info(`Pairing approve result: ${stdout}`);
-    res.json({ ok: true, output: stdout });
-  } catch (err) {
-    const output = err.stdout || err.stderr || err.message;
-    log.error(`Pairing approve failed: ${output}`);
-    res.status(500).json({ ok: false, error: output });
-  }
-});
-
-// ── POST /setup/reset — wipe config or full factory reset ─────────
-
-setupRoutes.post('/reset', async (req, res) => {
-  const { mode } = req.body || {};
-
-  try {
-    await gatewayManager.stop();
-
-    if (mode === 'full') {
-      // Full factory reset — wipe the entire .openclaw directory
+      await stopAllTerminalSessions();
+      await gatewayManager.stop();
+      await fs.mkdir(OPENCLAW_HOME, {recursive: true});
+      await fs.mkdir(WORKSPACE_DIR, {recursive: true});
+      atomicWrite(SETUP_INCOMPLETE_PATH, 'Setup has not completed. Retry setup after correcting the reported error.\n');
+      const signal = operationSignal ? AbortSignal.any([operationSignal, controller.signal]) : controller.signal;
+      const options = {signal, secrets: secretValues(data)};
+      if (interactive) {
+        res.set({'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'});
+        stream('Starting sign-in. Open the device-code URL below, then keep this page open until setup completes.\n\n');
+      }
+      await ensureProviderPlugins(data, options);
+      const args = buildOnboardArgs(data);
+      log.info(`Starting ${interactive ? 'device-code' : 'API-key'} onboarding for ${data.provider}`);
+      const onboard = interactive
+        ? await runOpenclawPty(args, {...options, onOutput: stream})
+        : await runOpenclaw(args, options);
+      if (onboard.code !== 0) throw new Error(`OpenClaw onboarding failed (exit ${onboard.code}). Setup has not completed.`);
+      if (!await config.readConfig()) throw new Error('OpenClaw onboarding did not persist a readable configuration.');
+      await verifyProviderPersistence(data, options);
+      await applyPostOnboardConfig(data, {...options, onOutput: interactive ? stream : undefined});
+      signal.throwIfAborted();
+      await fs.rm(SETUP_INCOMPLETE_PATH, {force: true});
       try {
-        await fs.rm(OPENCLAW_HOME, { recursive: true, force: true });
-      } catch { /* already gone */ }
-      // Re-create the base directories so the next setup works
-      await fs.mkdir(path.join(OPENCLAW_HOME, 'nodes'), { recursive: true });
-      await fs.mkdir(path.join(OPENCLAW_HOME, 'workspace'), { recursive: true });
-      log.info('Full factory reset complete. All data wiped.');
-      res.json({ ok: true, message: 'Full reset complete. All data wiped. Redirecting to setup...' });
-    } else {
-      // Config-only reset — remove config + env so setup wizard reappears
-      try { await fs.unlink(config.OPENCLAW_CONFIG_PATH); } catch { /* already gone */ }
-      try { await fs.unlink(config.OPENCLAW_ENV_PATH); } catch { /* already gone */ }
-      log.info('Config reset. Gateway stopped.');
-      res.json({ ok: true, message: 'Config reset complete. Redirecting to setup...' });
-    }
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+        await gatewayManager.start({signal});
+        signal.throwIfAborted();
+        if (!gatewayManager.isRunning()) throw new Error('The Gateway did not become ready. Check Admin logs before retrying.');
+        await adoptVerifiedSetup();
+        pairingService.startWatching();
+      }
+      catch (error) {
+        atomicWrite(SETUP_INCOMPLETE_PATH, 'Gateway startup after setup failed. Retry setup after inspection.\n');
+        await gatewayManager.stop(); throw error;
+      }
+      if (interactive) { stream('\n[setup] Complete. Open OpenClaw, then approve the matching browser request in Admin → Pairing if prompted.\n'); res.end(); }
+      else res.json({ok: true, message: 'Configuration saved. Gateway is ready. Open OpenClaw and approve your browser in Admin → Pairing if prompted.'});
+    }, {signal: controller.signal});
+  } catch (error) {
+    const message = redact(error.message, secretValues(data));
+    log.error(`Setup failed: ${message}`);
+    if (interactive && res.headersSent) { stream(`\n[setup] Failed: ${message}\n`); if (!res.destroyed) res.end(); }
+    else failure(res, Object.assign(new Error(message), {statusCode: error.statusCode || error.status}));
+  } finally { res.off('close', close); }
+}));
+
+setupRoutes.post('/pairing/approve', route(async (req, res) => {
+  const {channel, code} = req.body || {};
+  if (typeof channel !== 'string' || !['telegram','discord','slack','mattermost','googlechat'].includes(channel) || typeof code !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(code)) {
+    return res.status(400).json({ok: false, error: 'Provide a supported channel and its pairing code.'});
   }
-});
-
-// ── GET /setup/export — download a zip backup of .openclaw data ───
-
-setupRoutes.get('/export', async (req, res) => {
   try {
-    // Check that the data directory exists
-    try {
-      await fs.access(OPENCLAW_HOME);
-    } catch {
-      return res.status(404).json({ ok: false, error: 'No data directory found to export.' });
-    }
-
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-    const zipName = `openclaw-export-${timestamp}.zip`;
-    const tmpZip = path.join(os.tmpdir(), zipName);
-
-    const zipArgs = ['-r'];
-    // Password-protect with admin password if set
-    if (WRAPPER_ADMIN_PASSWORD) {
-      zipArgs.push('-P', WRAPPER_ADMIN_PASSWORD);
-    }
-    zipArgs.push(tmpZip, OPENCLAW_HOME);
-
-    const { stdout } = await execFileAsync('zip', zipArgs, { timeout: 60_000 });
-    log.info(`Export zip created: ${zipName}`);
-
-    // Verify the zip was created
-    let stat;
-    try {
-      stat = await fs.stat(tmpZip);
-    } catch {
-      return res.status(500).json({ ok: false, error: 'Failed to create export archive.' });
-    }
-
-    res.set({
-      'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="${zipName}"`,
-      'Content-Length': String(stat.size),
+    await withExclusiveOperation('channel-pairing', async ({signal} = {}) => {
+      const result = await runOpenclaw(['pairing', 'approve', channel, code], {signal, timeoutMs: 30_000});
+      if (result.code !== 0) throw new Error('Channel pairing failed. Check the code and try again.');
+      res.json({ok: true, output: result.output});
     });
+  } catch (error) { failure(res, error); }
+}));
 
-    const stream = createReadStream(tmpZip);
-    stream.pipe(res);
-    stream.on('end', () => {
-      fs.unlink(tmpZip).catch(() => {});
-    });
-    stream.on('error', (err) => {
-      log.error('Export stream error:', err.message);
-      fs.unlink(tmpZip).catch(() => {});
-      if (!res.headersSent) {
-        res.status(500).json({ ok: false, error: 'Stream error during export.' });
+setupRoutes.post('/reset', route(async (req, res) => {
+  const {mode} = req.body || {};
+  if (mode !== undefined && !['full', 'config'].includes(mode)) return res.status(400).json({ok: false, error: 'Reset mode must be config or full.'});
+  try {
+    await withExclusiveOperation('reset', async () => {
+      pairingService.stopWatching();
+      await stopAllTerminalSessions();
+      await gatewayManager.stop();
+      if (mode === 'full') {
+        // This repo owns nested workspace state. External/custom roots are never deleted.
+        await fs.rm(OPENCLAW_HOME, {recursive: true, force: true});
+        await fs.mkdir(WORKSPACE_DIR, {recursive: true});
+        await fs.mkdir(path.join(OPENCLAW_HOME, 'nodes'), {recursive: true});
+        // Recovery journals/snapshots live outside state and deliberately survive reset.
+      } else {
+        await fs.rm(config.OPENCLAW_CONFIG_PATH, {force: true});
+        await fs.rm(config.OPENCLAW_ENV_PATH, {force: true});
+        await fs.rm(SETUP_INCOMPLETE_PATH, {force: true});
+      }
+      forgetResetRecovery();
+      // A recovered failed upgrade remains blocked until the explicit Doctor flow.
+      res.json({ok: true, message: mode === 'full' ? 'Full reset complete. Data owned by this installation was removed.' : 'Configuration reset. Gateway stopped; stored conversations and workspace files retained.'});
+    }, {allowBootFailure: false});
+  } catch (error) { failure(res, error); }
+}));
+
+setupRoutes.get('/export', route(async (_req, res) => {
+  try {
+    await withExclusiveOperation('export', async ({signal} = {}) => {
+      const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'openclaw-export-'));
+      const archive = path.join(scratch, 'export.zip');
+      const running = gatewayManager.isRunning();
+      try {
+        await stopAllTerminalSessions();
+        await gatewayManager.stop();
+        const snapshot = await createNormalizedSnapshot({scratchDir: scratch, runCli: args => runOpenclaw(args, {signal, timeoutMs: 300_000})});
+        if (snapshot.sourceWorkspaceDirs.length && !snapshot.workspacesWithinState) {
+          const error = new Error('This installation has a workspace outside its OpenClaw state directory. This ZIP export supports nested workspaces only. Use the OpenClaw backup CLI to preserve all configured roots.');
+          error.statusCode = 422;
+          throw error;
+        }
+        // Preserve this template's familiar data/.openclaw/workspace ZIP layout.
+        // This is staged data from the official SQLite-consistent backup owner.
+        if (!snapshot.workspacesWithinState) {
+          await fs.cp(snapshot.workspaceDir, path.join(snapshot.stateDir, 'workspace'), {recursive: true, force: true});
+        }
+        const zip = await runCommand('zip', ['-r', '-P', WRAPPER_ADMIN_PASSWORD, archive, 'data/.openclaw'], {
+          cwd: path.dirname(snapshot.dataRoot), signal, timeoutMs: 300_000,
+          secrets: [WRAPPER_ADMIN_PASSWORD, OPENCLAW_GATEWAY_TOKEN],
+        });
+        if (zip.code !== 0) throw new Error('Could not create the protected export archive.');
+        inspectZipArchive(await fs.readFile(archive));
+        if (running) await gatewayManager.start();
+        await new Promise((resolve, reject) => res.download(archive, `openclaw-export-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`, error => error ? reject(error) : resolve()));
+      } finally {
+        await fs.rm(scratch, {recursive: true, force: true});
+        if (running && !gatewayManager.isRunning()) await gatewayManager.start();
       }
     });
-  } catch (err) {
-    log.error('Export failed:', err.message);
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
+  } catch (error) { failure(res, error); }
+}));

@@ -1,307 +1,136 @@
-/**
- * services/pairingService.js
- *
- * Device pairing management.
- *
- * Listing/approval go through openclaw's in-process plugin SDK
- * (`openclaw/plugin-sdk/device-bootstrap`) instead of the WS-based CLI.
- * This sidesteps two bugs in current openclaw releases:
- *
- *   1. WS handshake race against loopback gateway (issue #45504) which
- *      causes `openclaw devices list/approve --token` to hang/timeout.
- *   2. `missing scope: operator.admin` errors (issue #51779) — the shared
- *      gateway token doesn't carry operator scopes; the SDK lets us pass
- *      `callerScopes: ["operator.admin"]` explicitly because the wrapper
- *      runs with filesystem access to the state dir and is the trusted
- *      bootstrap admin surface (guarded by WRAPPER_ADMIN_PASSWORD).
- *
- * Reject/revoke still use the CLI because the SDK doesn't export them yet.
- */
-
-import { EventEmitter } from 'events';
-import { spawn } from 'child_process';
-import { createRequire } from 'module';
-import { pathToFileURL } from 'url';
-import fs from 'fs/promises';
-import path from 'path';
-import chokidar from 'chokidar';
-import {
-  OPENCLAW_HOME,
-  DATA_DIR,
-  OPENCLAW_GATEWAY_TOKEN,
-  OPENCLAW_ENTRY,
-  OPENCLAW_NODE,
-} from '../config/index.js';
+/** Pairing state is owned by OpenClaw. Each SDK call has a short-lived owner. */
+import { EventEmitter } from 'node:events';
+import { OPENCLAW_GATEWAY_TOKEN, GATEWAY_WS_URL } from '../config/index.js';
+import { runSdk, runCli } from './openclawRuntime.js';
+import { assertOperationsAvailable, withExclusiveOperation, withStateRead, isOperationActive } from './operations.js';
 import { log } from '../utils/log.js';
 
-const PENDING_PATH = path.join(OPENCLAW_HOME, 'nodes', 'pending.json');
-const PAIRED_PATH  = path.join(OPENCLAW_HOME, 'nodes', 'paired.json');
-
-// ─── SDK loader ─────────────────────────────────────────────────────
-// openclaw/plugin-sdk/device-bootstrap is an internal SDK; resolve its
-// path relative to the openclaw entry.js so it works regardless of where
-// openclaw is installed.
-
-let deviceBootstrapSdkPromise = null;
-
-function resolveDeviceBootstrapSdkPath() {
-  const entryPath = path.resolve(OPENCLAW_ENTRY);
-  try {
-    const requireFromOpenclaw = createRequire(entryPath);
-    return requireFromOpenclaw.resolve('openclaw/plugin-sdk/device-bootstrap');
-  } catch {
-    // Fallback: assume standard openclaw layout
-    const openclawRoot = path.dirname(path.dirname(entryPath));
-    return path.join(openclawRoot, 'dist', 'plugin-sdk', 'device-bootstrap.js');
+function identifier(value, label) {
+  if (typeof value !== 'string' || !value.trim() || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,511}$/.test(value)) {
+    throw Object.assign(new Error(`${label} is required and must be a valid identifier.`), { status: 400 });
   }
+  return value.trim();
 }
 
-async function loadDeviceBootstrapSdk() {
-  if (!deviceBootstrapSdkPromise) {
-    deviceBootstrapSdkPromise = import(
-      pathToFileURL(resolveDeviceBootstrapSdkPath()).href
-    ).catch((err) => {
-      deviceBootstrapSdkPromise = null;
-      throw err;
-    });
+/** Never send paired credential values or public keys back to the dashboard. */
+export function sanitizePairing(value) {
+  if (Array.isArray(value)) return value.map(sanitizePairing);
+  if (!value || typeof value !== 'object') return value;
+  const clean = {};
+  for (const [key, child] of Object.entries(value)) {
+    if (/^(token|secret|privateKey|publicKey|bootstrapToken)$/i.test(key)) continue;
+    clean[key] = sanitizePairing(child);
   }
-  return deviceBootstrapSdkPromise;
+  return clean;
 }
 
-/**
- * Public probe — log SDK readiness on boot. Called from server.js so we know
- * immediately if openclaw's dist layout changed and our resolver broke.
- */
-export async function probeDeviceBootstrapSdk() {
-  try {
-    await loadDeviceBootstrapSdk();
-    log.info(`device bootstrap SDK ready: ${resolveDeviceBootstrapSdkPath()}`);
-  } catch (err) {
-    log.warn(
-      `device bootstrap SDK unavailable at ${resolveDeviceBootstrapSdkPath()}: ${err?.message || String(err)}`
-    );
-  }
-}
-
-// ─── Helpers ────────────────────────────────────────────────────────
-
-function devicePairingTimestamp(request) {
-  const ts = request?.ts;
-  if (typeof ts === 'number') return ts;
-  if (typeof ts === 'string') {
-    const parsed = Date.parse(ts);
-    return Number.isNaN(parsed) ? 0 : parsed;
-  }
-  return 0;
-}
-
-function newestPendingDevicePairing(pending) {
-  if (!Array.isArray(pending) || pending.length === 0) return null;
-  return pending.reduce((latest, current) =>
-    devicePairingTimestamp(current) > devicePairingTimestamp(latest) ? current : latest
-  );
-}
-
-function describeDeviceApprovalForbidden(result) {
-  const scope = result?.scope || 'unknown';
-  const role  = result?.role  || 'unknown';
-
-  switch (result?.reason) {
-    case 'caller-scopes-required':
-    case 'caller-missing-scope':
-      return `missing scope: ${scope}`;
-    case 'scope-outside-requested-roles':
-      return `invalid scope for requested roles: ${scope}`;
-    case 'bootstrap-role-not-allowed':
-      return `bootstrap profile does not allow role: ${role}`;
-    case 'bootstrap-scope-not-allowed':
-      return `bootstrap profile does not allow scope: ${scope}`;
-    default:
-      return 'Device approval is forbidden by bootstrap policy.';
-  }
-}
-
-class PairingService extends EventEmitter {
-  constructor() {
+export class PairingService extends EventEmitter {
+  constructor({ sdk = runSdk, cli = runCli, intervalMs = 5000 } = {}) {
     super();
-    this._watcher = null;
-    this._startWatching();
+    this._sdk = sdk;
+    this._cli = cli;
+    this._intervalMs = intervalMs;
+    this._timer = null;
+    this._polling = false;
+    this._lastPending = null;
+    this._generation = 0;
   }
-
-  // ─── Listing — SDK with file fallback ────────────────────────────
 
   async listDevices() {
-    try {
-      const { listDevicePairing } = await loadDeviceBootstrapSdk();
-      const data = await listDevicePairing();
+    assertOperationsAvailable();
+    if (this._listPromise) return this._listPromise;
+    this._listPromise = withStateRead('list-devices', async ({ signal }) => {
+      const data = await this._sdk('devices-list', { signal });
       return {
-        pending: Array.isArray(data?.pending) ? data.pending : [],
-        paired:  Array.isArray(data?.paired)  ? data.paired  : [],
+        pending: sanitizePairing(Array.isArray(data?.pending) ? data.pending : []),
+        paired: sanitizePairing(Array.isArray(data?.paired) ? data.paired : []),
       };
-    } catch (err) {
-      log.warn(`SDK listDevicePairing failed (${err?.message || err}); reading files`);
-      return {
-        pending: await this._readFile(PENDING_PATH, []),
-        paired:  await this._readFile(PAIRED_PATH,  []),
-      };
-    }
+    });
+    try { return await this._listPromise; } finally { this._listPromise = null; }
   }
 
-  async getPending() {
-    const { pending } = await this.listDevices();
-    return pending;
-  }
-
-  async getPaired() {
-    const { paired } = await this.listDevices();
-    return paired;
-  }
-
-  // ─── Approve — SDK only (CLI route hits the operator.admin scope bug) ─
+  async getPending() { return (await this.listDevices()).pending; }
+  async getPaired() { return (await this.listDevices()).paired; }
 
   async approve(requestId) {
-    const { approveDevicePairing, listDevicePairing } = await loadDeviceBootstrapSdk();
-
-    let targetRequestId = requestId ? String(requestId).trim() : '';
-
-    // Resolve "approve latest" for callers who omit requestId
-    if (!targetRequestId) {
-      const pairings = await listDevicePairing();
-      const latest = newestPendingDevicePairing(pairings?.pending || []);
-      targetRequestId = latest?.requestId || '';
-      if (!targetRequestId) {
-        throw new Error('No pending device pairing requests.');
+    const target = identifier(requestId, 'requestId');
+    return withExclusiveOperation('approve-device', async ({ signal }) => {
+      const result = await this._sdk('devices-approve', { requestId: target, signal });
+      if (!result) throw Object.assign(new Error('This pairing request no longer exists. Refresh the list and match the requesting browser ID.'), { status: 404 });
+      if (result.status === 'forbidden') {
+        throw Object.assign(new Error(`Device approval was refused by OpenClaw policy (${result.reason || 'forbidden'}).`), { status: 403 });
       }
-    }
-
-    log.info(`Approving pairing request: ${targetRequestId}`);
-
-    const result = await approveDevicePairing(targetRequestId, {
-      // The wrapper has filesystem access to the state dir and is guarded by
-      // WRAPPER_ADMIN_PASSWORD, so it acts as the trusted bootstrap admin.
-      callerScopes: ['operator.admin'],
+      const device = sanitizePairing(result.device);
+      this.emit('pairingUpdate', { action: 'approved', requestId: target, device });
+      return { requestId: target, device };
     });
-
-    if (!result) {
-      throw new Error(`Unknown pending device pairing request: ${targetRequestId}`);
-    }
-
-    if (result.status === 'forbidden') {
-      throw new Error(describeDeviceApprovalForbidden(result));
-    }
-
-    log.info(`Approved device pairing ${targetRequestId}`);
-    this.emit('pairingUpdate', { action: 'approved', requestId: targetRequestId, device: result.device });
-    return { requestId: targetRequestId, device: result.device };
   }
 
-  // ─── Reject / Revoke — CLI fallback (SDK does not export these yet) ──
+  async _command(args, signal) {
+    const options = [...args, '--url', GATEWAY_WS_URL, '--timeout', '15000', '--json'];
+    if (OPENCLAW_GATEWAY_TOKEN) options.push('--token', OPENCLAW_GATEWAY_TOKEN);
+    const result = await this._cli(options, { signal, timeoutMs: 25000 });
+    if (result.code !== 0) throw new Error('OpenClaw could not update this device. Check that the Gateway is running, then refresh the device list.');
+    return result;
+  }
 
   async reject(requestId) {
-    log.info(`Rejecting pairing request: ${requestId}`);
-    const args = ['devices', 'reject', String(requestId)];
-    if (OPENCLAW_GATEWAY_TOKEN) args.push('--token', OPENCLAW_GATEWAY_TOKEN);
-    await this._runOpenclaw(args);
-    this.emit('pairingUpdate', { action: 'rejected', requestId });
+    const target = identifier(requestId, 'requestId');
+    return withExclusiveOperation('reject-device', async ({ signal }) => {
+      await this._command(['devices', 'reject', target], signal);
+      this.emit('pairingUpdate', { action: 'rejected', requestId: target });
+    });
   }
 
   async revoke(deviceId, role) {
-    log.info(`Revoking device: ${deviceId} role: ${role}`);
-
-    // Step 1: Revoke the device token (best-effort, may already be revoked)
-    if (role) {
-      try {
-        const args = ['devices', 'revoke', '--device', deviceId, '--role', role];
-        if (OPENCLAW_GATEWAY_TOKEN) args.push('--token', OPENCLAW_GATEWAY_TOKEN);
-        await this._runOpenclaw(args);
-      } catch (err) {
-        log.warn(`Revoke token failed (may already be revoked): ${err.message}`);
-      }
-    }
-
-    // Step 2: Remove the device entry
-    const args = ['devices', 'remove', deviceId];
-    if (OPENCLAW_GATEWAY_TOKEN) args.push('--token', OPENCLAW_GATEWAY_TOKEN);
-    await this._runOpenclaw(args);
-
-    this.emit('pairingUpdate', { action: 'revoked', deviceId });
-  }
-
-  // ─── Private ────────────────────────────────────────────────────────
-
-  /**
-   * Spawn `node $OPENCLAW_ENTRY <args>` (matches reference template).
-   * Returns stdout on success, throws Error with combined output on failure.
-   * 30s timeout — well above the usual WS race window.
-   */
-  _runOpenclaw(args, timeoutMs = 30_000) {
-    return new Promise((resolve, reject) => {
-      const env = {
-        ...process.env,
-        HOME: DATA_DIR,
-        OPENCLAW_STATE_DIR: OPENCLAW_HOME,
-      };
-      const proc = spawn(OPENCLAW_NODE, [OPENCLAW_ENTRY, ...args], {
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      let out = '';
-      proc.stdout?.on('data', (d) => { out += d.toString('utf8'); });
-      proc.stderr?.on('data', (d) => { out += d.toString('utf8'); });
-
-      const timer = setTimeout(() => {
-        proc.kill('SIGTERM');
-        out += '\n[timeout] command exceeded ' + timeoutMs + 'ms\n';
-      }, timeoutMs);
-
-      proc.on('error', (err) => {
-        clearTimeout(timer);
-        reject(new Error(`spawn failed: ${err.message}\n${out}`));
-      });
-
-      proc.on('close', (code) => {
-        clearTimeout(timer);
-        if (code === 0) resolve(out);
-        else reject(new Error(`openclaw ${args[0]} ${args[1] || ''} exit ${code}: ${out.trim()}`));
-      });
+    const target = identifier(deviceId, 'deviceId');
+    const targetRole = role == null || role === '' ? null : identifier(role, 'role');
+    return withExclusiveOperation('revoke-device', async ({ signal }) => {
+      // Both calls must succeed; never describe a best-effort revoke as success.
+      if (targetRole) await this._command(['devices', 'revoke', '--device', target, '--role', targetRole], signal);
+      await this._command(['devices', 'remove', target], signal);
+      this.emit('pairingUpdate', { action: 'revoked', deviceId: target });
     });
   }
 
-  async _readFile(filePath, defaultVal) {
-    try {
-      const raw = await fs.readFile(filePath, 'utf8');
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-      return Object.entries(parsed).map(([id, v]) => ({ id, ...v }));
-    } catch {
-      return defaultVal;
-    }
-  }
-
-  _startWatching() {
-    this._watcher = chokidar.watch(PENDING_PATH, {
-      persistent: true,
-      ignoreInitial: true,
-      awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 100 },
-    });
-
-    // Read pending.json directly on change — do NOT call listDevices() because
-    // we want the SSE push to be instant, before any SDK overhead.
-    const pushPending = async () => {
+  startWatching() {
+    if (this._timer) return;
+    const generation = ++this._generation;
+    const poll = async () => {
+      // A full SDK worker is expensive. Unattended deployments have no SSE
+      // consumers, so polling must never compete with inference or startup.
+      if (!this.listenerCount('pendingChanged') && !this.listenerCount('pairingUpdate')) return;
+      if (this._polling || isOperationActive()) return;
+      this._polling = true;
       try {
-        const pending = await this._readFile(PENDING_PATH, []);
-        this.emit('pendingChanged', pending);
-        log.info(`Pairing pending list updated (${pending.length} pending)`);
-      } catch { /* file may not exist yet */ }
+        const pending = await this.getPending();
+        if (generation !== this._generation) return;
+        const encoded = JSON.stringify(pending);
+        if (encoded !== this._lastPending) {
+          this._lastPending = encoded;
+          this.emit('pendingChanged', pending);
+        }
+      } catch (error) {
+        if (![409, 503].includes(error.status)) log.debug('Pairing refresh failed:', error.message);
+      } finally { this._polling = false; }
     };
+    this._timer = setInterval(poll, this._intervalMs);
+    this._timer.unref();
+    void poll();
+  }
 
-    this._watcher.on('change', pushPending);
-    this._watcher.on('add', pushPending);
-    this._watcher.on('error', (err) => {
-      log.warn('Pairing file watcher error (non-fatal):', err.message);
-    });
+  stopWatching() {
+    ++this._generation;
+    clearInterval(this._timer);
+    this._timer = null;
+    this._lastPending = null;
   }
 }
 
 export const pairingService = new PairingService();
+
+/** Explicit boot probe; never import SDK or touch state during module loading. */
+export async function probeDeviceBootstrapSdk() {
+  await pairingService.listDevices();
+  log.info('OpenClaw device bootstrap SDK worker is ready.');
+}

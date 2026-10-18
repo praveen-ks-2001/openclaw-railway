@@ -11,13 +11,13 @@ Self-host OpenClaw on Railway with this template and get a fully configured **ga
 
 ## 🚀 Getting Started with OpenClaw on Railway | Deployment Guide
 
-Once your Railway deploy is live, open your service URL — you'll be redirected to the `/setup` wizard automatically. Pick your AI provider (Anthropic, OpenAI, Google Gemini, Groq, or OpenRouter), paste your API key, and optionally configure messaging channels like Telegram or Discord. Click **Launch OpenClaw** and the gateway starts within seconds.
+Set a strong `WRAPPER_ADMIN_PASSWORD` and `OPENCLAW_GATEWAY_TOKEN` in Railway, and attach a persistent volume at `/data`. Once your deploy is live, open your service URL and sign in to the `/setup` wizard with the admin password. Pick your AI provider and authentication method, supply an API key or complete provider sign-in, and optionally configure messaging channels. Click **Launch OpenClaw** and wait for the Gateway to finish starting.
 
 ### Step 1: Initial Setup via `/setup`
 
 The `/setup` page is a **one-time configuration wizard** — it's where you select your AI provider, paste your API key, and optionally wire up messaging channels (Telegram, Discord, Slack, etc.). 
 
-Once setup is complete, `/setup` **cannot be used again** without first wiping the existing configuration from the `/admin` panel. This is by design — `/setup` is an open URL (no password), so it only works when no config exists yet.
+Both setup and administration require `WRAPPER_ADMIN_PASSWORD`. If it is missing, set it in Railway and redeploy; privileged actions stay disabled until it is configured. Once an installation is configured, manage it through `/admin` instead of rerunning setup. **Reset Config** is an explicit reconfiguration action; download a backup before using it.
 
 ![OpenClaw setup wizard](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088297/openclaw_setup_page_rxowv8.png)
 
@@ -27,40 +27,48 @@ The `/admin` page is password-protected — log in with your `WRAPPER_ADMIN_PASS
 
 - **📊 Status** — real-time gateway health, uptime, and quick actions (restart/stop)
 - **📋 Live Logs** — stream OpenClaw gateway logs with filtering, directly in the browser
-- **💻 Terminal** — full PTY terminal running inside the container for diagnostics and management
-- **🔗 Device Pairing** — approve or reject browser and device pairing requests in real time
-- **⚙️ Config Editor** — view and edit `openclaw.json` with hot-reload support
+- **💻 Terminal** — interactive OpenClaw TUI chat in a native PTY
+- **🔗 Device Pairing** — approve or reject browser requests, and remove paired devices
+- **⚙️ Config Editor** — edit and validate `openclaw.json`, preserve redacted secrets, and detect conflicting edits
 
 ![OpenClaw Admin Page Protection](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088295/Openclaw_Admin_Login_u1eqcu.png)
 
 ![OpenClaw admin dashboard](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088294/Openclaw_admin_UI_qzsxep.png)
 
 
-> 💡 **Tip:** Full terminal access to your OpenClaw container is available directly from the **Admin → Terminal** panel.
+> 💡 **Tip:** **Admin → Terminal** runs `openclaw tui` for terminal chat. It is not a container shell. Use the dashboard controls for management, or your container/Railway shell for host CLI commands.
 
-![OpenClaw admin terminal — run openclaw CLI commands directly in the browser](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088288/Openclaw_admin_TUI_elvlpt.png)
+![OpenClaw admin terminal — interactive TUI chat](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088288/Openclaw_admin_TUI_elvlpt.png)
 
 ### Step 3: Connect to the **OpenClaw UI**
 
 Click the **"Open OpenClaw UI"** button in the top-right corner of the admin dashboard to open the main OpenClaw interface.
 
-If this is your **first time connecting**, you'll need to set up the **OpenClaw gateway connection**:
+On your first connection:
 
-1. **Open the gateway screen** — clicking "Open OpenClaw UI" will take you to the gateway connection page
+1. If OpenClaw asks for a **Gateway secret** or token, copy the **Gateway Token** from the Admin Dashboard's Status panel, paste it into OpenClaw, and select **Connect**.
+2. If you see **Approve this browser**, a request ID, or a host device-approval command, **keep that OpenClaw tab open**. Return to **Admin Dashboard → Pairing** and approve the matching request ID. The dashboard performs the approval, so you do not need to run the host command.
+3. Return to the same OpenClaw tab. It reconnects automatically after approval; use **Check now** if needed. Once it shows **Connected**, send a message in a conversation.
 
-![OpenClaw gateway connection screen](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088291/Openclaw_gateway_dlmpb3.png)
+A messaging bot's **channel pairing code** is separate from browser approval. If you selected a pairing DM policy, send the bot a direct message and enter the code from its reply in the setup page's **Channel Pairing** step.
 
-2. **Enter your gateway token** — copy your `OPENCLAW_GATEWAY_TOKEN` from the Admin dashboard or your Railway environment variables, paste it into the gateway token field, and click **Connect**. Your browser will send a device pairing request to the gateway
+### Updating an Existing Installation
 
-![OpenClaw gateway — token entered and pairing request pending](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088290/Openclaw_gateway_token_passed_pairing_pending_fa7abr.png)
+This branch pins **OpenClaw 2026.10.4** in `package.json` and builds with **Node.js 24.16.0**. `OPENCLAW_VERSION` environment variables and build arguments are ignored, including older values left in Railway. Choose a supported release branch to select another version.
 
-3. **Approve the pairing request** — switch back to the **Admin Dashboard → Pairing** panel and approve the incoming browser pairing request
+For an upgrade, keep the same `/data` volume and existing credentials. Do not reset configuration or rerun setup. Startup snapshots existing state before migration, validates the upgraded Gateway before normal operation, and retains recovery information if startup fails. Review **Admin → Logs** if the upgrade has not finished. If the dashboard reports **Upgrade needs attention**, resolve the logged cause and use **Retry upgrade**; recovery snapshots are retained, and no setup reset is needed.
 
-![OpenClaw admin — approve device pairing request](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088289/Openclaw_Pairing_UI_spmo3x.png)
+Download a backup from **Admin → Download Backup** before upgrading. Export briefly stops the Gateway and closes Terminal/TUI sessions while creating a database-consistent archive, then restarts a previously running Gateway. The ZIP uses your current `WRAPPER_ADMIN_PASSWORD`; keep both the archive and that password private because the backup contains credentials and conversations.
 
-4. **Go back to the gateway and click Connect again** — once the pairing is approved, the OpenClaw UI will load and you're ready to start chatting with your self-hosted AI assistant
+Export includes state and any number of verified workspaces nested inside the configured state directory, preserving each workspace's relative location. The default is `/data/.openclaw/workspace`; a custom `OPENCLAW_DATA_DIR` is supported when its workspaces stay inside its `.openclaw` directory. The dashboard export refuses external workspaces, agent databases or credential directories, external active configuration, config `$include` graphs, and unsupported archive links or special files. For a refused layout, back up the volume and every external root, or use the official OpenClaw backup CLI after verifying its archive covers those roots.
 
-![OpenClaw UI — fully connected and ready to use](https://res.cloudinary.com/asset-cloudinary/image/upload/v1774088288/OpenClaw_UI_after_full_setup_rzkl2x.png)
+Allow free disk space for your data and retained upgrade/recovery copies. **Full Factory Reset** removes this installation's active state, including its nested workspaces; recovery snapshots outside that directory remain available and can still contain older credentials and conversations. Reset is not a secure erase of the whole volume.
+
+**Downgrading code does not reverse data migrations.** Returning to an older branch after a completed upgrade requires restoring a compatible pre-upgrade state/workspace backup while the service is stopped. That backup does not contain messages or edits made afterward. A retained old release branch alone is not a lossless rollback. Restore requires container/host tooling; this dashboard provides backup downloads, without an upload/import flow.
+
+### Editing Configuration
+
+The Config Editor hides secrets as `[redacted]`. Leave that value unchanged to retain an existing secret, replace it to change the secret, or remove its key to delete it. Saves include the revision loaded from disk; a conflicting edit is rejected without discarding your draft. Copy your draft, select **Reload from Disk**, then reapply your changes. Invalid configuration and failed startup checks are reported as errors.
 
 ## About Hosting OpenClaw 📖
 
@@ -82,7 +90,7 @@ One-click deploy with zero server configuration:
 
 - 🟢 No Docker, volume, or network setup — Railway handles it all
 - 🔐 Managed TLS and custom domains out of the box
-- 🔄 One-click redeploys from Git with zero downtime
+- 🔄 Redeploys from Git with startup and migration checks
 - 💾 Persistent volume keeps config, credentials, and conversations across deploys
 - 🌐 Browser-based setup wizard — no terminal or SSH required
 - 📊 Built-in admin dashboard with live logs, terminal, and device pairing
@@ -94,8 +102,8 @@ One-click deploy with zero server configuration:
 
 ## Dependencies for OpenClaw 📦
 
-- **OpenClaw** — installed globally in Docker via `npm install -g openclaw@${OPENCLAW_VERSION}` ([GitHub](https://github.com/openclaw/openclaw))
-- **Node.js 22** — runtime for both the Express wrapper and OpenClaw gateway
+- **OpenClaw 2026.10.4** — installed globally in Docker using the exact branch pin in `package.json` ([GitHub](https://github.com/openclaw/openclaw))
+- **Node.js 24.16.0** — runtime for both the Express wrapper and OpenClaw gateway
 - **node-pty** — native PTY for the admin terminal (compiled in Docker build stage)
 
 ### Deployment Dependencies
@@ -103,41 +111,33 @@ One-click deploy with zero server configuration:
 - **GitHub:** [openclaw/openclaw](https://github.com/openclaw/openclaw)
 - **Docs:** [docs.openclaw.ai](https://docs.openclaw.ai/)
 
-## 🖥️ Minimum Hardware Requirements for OpenClaw
+## 🖥️ Deployment Sizing for OpenClaw
 
-| Resource | Minimum | Recommended |
+| Resource | Starting allocation | Recommended |
 |----------|---------|-------------|
 | CPU | 1 vCPU | 2 vCPU |
-| RAM | 2 GB (build OOMs on 1 GB) | 4 GB |
+| RAM | 3 GiB tested with one agent | 4 GiB+; more for concurrent agents, plugins, or heavier workloads |
 | Storage | 1 GB | 5 GB+ (grows with conversations and workspace) |
-| Runtime | Node.js 22 | Node.js 22 |
+| Runtime | Node.js 24.16.0 | Included in the Docker image |
 
+Local validation completed a fresh MiniMax browser conversation with a **3 GiB** container limit. Two **2 GiB** test installations were killed for memory exhaustion, including a browser-only chat after background pairing work was reduced. These tests used Linux/amd64 Docker emulation on an ARM host; they are local results, not a native Railway benchmark or a guarantee for other workloads. Monitor memory and provide more headroom as usage grows.
 
 ## 🐳 Self-Hosting OpenClaw
 
 If you prefer to self-host outside Railway, clone this repo and run with Docker:
 
 ```
-git clone https://github.com/your-org/openclaw-railway-template.git
-cd openclaw-railway-template
+git clone https://github.com/praveen-ks-2001/openclaw-railway.git
+cd openclaw-railway
 docker build -t openclaw-railway .
 docker run -d \
   --name openclaw \
   -p 3000:3000 \
   -e PORT=3000 \
   -e OPENCLAW_GATEWAY_TOKEN=your-secret-token \
+  -e WRAPPER_ADMIN_PASSWORD=your-strong-admin-password \
   -v ./data:/data \
   openclaw-railway
-```
-
-Or run OpenClaw directly with the official Docker image:
-
-```
-docker run -d \
-  --name openclaw \
-  -p 18789:18789 \
-  -v ~/.openclaw:/home/node/.openclaw \
-  ghcr.io/openclaw/openclaw:latest
 ```
 
 ## 💰 Is OpenClaw Free?
@@ -165,10 +165,10 @@ OpenClaw shines when you need an always-on autonomous agent accessible from any 
 OpenClaw is an open-source, self-hosted personal AI assistant that connects 20+ messaging platforms (WhatsApp, Telegram, Discord, etc.) to AI models like Claude, GPT, and Gemini. It runs on your own hardware, keeping all data private.
 
 **Can I use my own AI provider or local models?**
-Yes. The setup wizard supports Anthropic, OpenAI, Google Gemini, Groq, and OpenRouter out of the box. For local models, configure Ollama as a custom OpenAI-compatible endpoint. You can also set fallback models in the config.
+Yes. The setup wizard supports Anthropic, OpenAI, Google Gemini, Groq, OpenRouter, and other providers. Select **Ollama** for its native API and a reachable server URL, or choose a supported self-hosted/custom endpoint. You can also set fallback models in the config.
 
 **Is it safe to expose OpenClaw to the public internet?**
-This template uses token-based auth (`OPENCLAW_GATEWAY_TOKEN`) and optional admin password protection. Device pairing requires explicit approval from the admin dashboard. Review the [OpenClaw security docs](https://docs.openclaw.ai/) before deploying to understand the trust model.
+This template uses Gateway token authentication (`OPENCLAW_GATEWAY_TOKEN`) and requires `WRAPPER_ADMIN_PASSWORD` for setup, management APIs, and the terminal. Browser/device pairing requires explicit approval from the admin dashboard. Public health status excludes Gateway credentials and private configuration. Review the [OpenClaw security docs](https://docs.openclaw.ai/) before deploying to understand the trust model.
 
 **How do I update OpenClaw to a newer version?**
-Set the `OPENCLAW_VERSION` build argument in Railway (e.g., `2026.3.13`) and trigger a redeploy. Omit or set to `latest` to always pull the newest release on build.
+Deploy the branch containing the supported upgrade. The exact OpenClaw version is committed in that branch's `package.json`; Railway version variables and build arguments do not change it. Keep the existing volume, credentials, and a private backup. See **Updating an Existing Installation** above for migration and downgrade requirements.

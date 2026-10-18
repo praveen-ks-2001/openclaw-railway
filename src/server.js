@@ -1,117 +1,73 @@
-/**
- * openclaw-railway — server.js
- *
- * Single entry point. Responsibilities:
- *  1. Boot Express on PORT (Railway's public port)
- *  2. If openclaw.json already exists on the volume → launch gateway immediately
- *  3. Proxy all /ui/* traffic through to openclaw's gateway once it's up
- *  4. Serve the Setup UI and admin dashboard when needed
- *  5. Attach terminal WebSocket at /ws/terminal
- *  6. Push pairing SSE events when pending.json changes
- */
-
 import express from 'express';
-import { createServer } from 'http';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import { execFileSync } from 'child_process';
-
-import { config, OPENCLAW_ENTRY, OPENCLAW_NODE } from './config/index.js';
+import { createServer } from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { config, PORT, WRAPPER_ADMIN_PASSWORD, initializeGatewayToken } from './config/index.js';
+import { assertPinnedRuntime } from './utils/version.js';
 import { gatewayManager } from './services/gatewayManager.js';
-import { pairingService, probeDeviceBootstrapSdk } from './services/pairingService.js';
-import { attachTerminalWebSocket, terminalWss } from './services/terminalService.js';
+import { pairingService } from './services/pairingService.js';
+import { attachTerminalWebSocket, terminalWss, stopAllTerminalSessions } from './services/terminalService.js';
 import { setupRoutes } from './routes/setup.js';
-import { apiRoutes } from './routes/api.js';
-import { proxyMiddleware } from './middleware/proxy.js';
+import { apiRoutes, isWrapperApiPath } from './routes/api.js';
 import { requestLogger } from './middleware/logger.js';
-import { requireAdminAuth, setAuthCookie, clearAuthCookie } from './middleware/auth.js';
-import { ensureDataDir } from './utils/fs.js';
+import { requireAdminAuth, setAuthCookie, clearAuthCookie, isAdminAuthenticated,
+  isAdminOriginAllowed, sanitizeReturnTo, passwordsEqual } from './middleware/auth.js';
+import { recoverConfigEdit } from './services/configEditor.js';
+import { recoverBeforeStartup, runBootUpgrade, prepareGateway } from './services/upgradeService.js';
+import { isOperationActive, getBootFailure, setBootFailure, stopOperations } from './services/operations.js';
 import { log } from './utils/log.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-async function main() {
-  // ── Startup sanity checks ──────────────────────────────────────
-  // Verify openclaw entry.js is reachable. We invoke it directly via node
-  // (not the bin wrapper) everywhere, so this is what actually matters.
-  try {
-    execFileSync(OPENCLAW_NODE, [OPENCLAW_ENTRY, '--version'], { stdio: 'ignore' });
-  } catch {
-    log.error('❌ openclaw entry.js not found or failed to run.');
-    log.error(`   OPENCLAW_NODE  = ${OPENCLAW_NODE}`);
-    log.error(`   OPENCLAW_ENTRY = ${OPENCLAW_ENTRY}`);
-    log.error('   Check Dockerfile installs openclaw globally and the path is correct.');
-    process.exit(1);
-  }
-
-  // Probe the in-process device-bootstrap SDK so we know on boot whether
-  // openclaw's dist layout is intact (we use it for device list/approve).
-  void probeDeviceBootstrapSdk();
-
-  // 1. Ensure all required directories exist on the volume
-  await ensureDataDir();
-
+const publicDir = fileURLToPath(new URL('../public/', import.meta.url));
+const escapeHtml = (value) => String(value).replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+function unavailable(res) {
+  res.setHeader('Retry-After','3');
+  return res.status(503).json({ok:false,error: getBootFailure()
+    ? 'Upgrade recovery requires attention. Open /admin to review status and retry deliberately.'
+    : 'OpenClaw is starting or a maintenance operation is running. Please retry shortly.'});
+}
+export function createApp() {
   const app = express();
   const httpServer = createServer(app);
-
-  // ── Middleware ─────────────────────────────────────────────────
-  app.use(express.json({ limit: '2mb' }));
-  app.use(express.urlencoded({ extended: true }));
+  app.disable('x-powered-by');
+  const rawBody = (req, _res, buffer) => { req.rawBody = buffer; };
+  const managementJson = express.json({ limit:'2mb', verify:rawBody });
+  app.use('/api',(req,res,next)=>{
+    if(isWrapperApiPath(req.path) || /^\/upgrade\/retry\/?$/i.test(req.path)) return managementJson(req,res,next);
+    next();
+  });
+  app.use(['/setup','/login'],managementJson);
+  app.use('/login',express.urlencoded({ extended:false,limit:'16kb' }));
   app.use(requestLogger);
 
-  // Static files for wrapper UI (setup/admin pages)
-  // ── Routes ─────────────────────────────────────────────────────
-
-  // Internal management API — always available
-  app.use('/api', apiRoutes);
-
-  // Setup flow routes
-  app.use('/setup', setupRoutes);
-
-  /**
-   * SSE: real-time pairing pending updates
-   * Protected by admin auth.
-   */
-  app.get('/api/pairing/stream', requireAdminAuth, (req, res) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    pairingService.getPending().then((pending) => {
-      res.write(`data: ${JSON.stringify({ type: 'pending', pending })}\n\n`);
-    }).catch(() => {});
-
-    const onPendingChanged = (pending) => {
-      res.write(`data: ${JSON.stringify({ type: 'pending', pending })}\n\n`);
-    };
-    const onPairingUpdate = (evt) => {
-      res.write(`data: ${JSON.stringify({ type: 'update', ...evt })}\n\n`);
-    };
-
-    pairingService.on('pendingChanged', onPendingChanged);
-    pairingService.on('pairingUpdate',  onPairingUpdate);
-
-    req.on('close', () => {
-      pairingService.off('pendingChanged', onPendingChanged);
-      pairingService.off('pairingUpdate',  onPairingUpdate);
-    });
+  app.post('/api/upgrade/retry', requireAdminAuth, async (_req,res,next) => {
+    try {
+      const result = await runBootUpgrade({force:true});
+      pairingService.startWatching();
+      res.json({ok:true,...result});
+    } catch(error) {next(error);}
+  });
+  app.use('/api',apiRoutes);
+  app.use('/setup',setupRoutes);
+  app.get('/api/pairing/stream',requireAdminAuth,async (req,res,next) => {
+    if(isOperationActive() || getBootFailure()) return unavailable(res);
+    try {
+      const pending = await pairingService.getPending();
+      if(isOperationActive() || getBootFailure()) return unavailable(res);
+      res.set({'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
+      res.flushHeaders();
+      res.write(`data: ${JSON.stringify({type:'pending',pending})}\n\n`);
+      const changed = (pending) => res.write(`data: ${JSON.stringify({type:'pending',pending})}\n\n`);
+      const update = (event) => res.write(`data: ${JSON.stringify({type:'update',...event})}\n\n`);
+      pairingService.on('pendingChanged',changed);
+      pairingService.on('pairingUpdate',update);
+      req.on('close',()=>{pairingService.off('pendingChanged',changed);pairingService.off('pairingUpdate',update);});
+    } catch(error) {next(error);}
   });
 
-  // Root routing — when gateway is running, proxy openclaw UI at /.
-  // When not configured, redirect to /setup.
-  app.get('/', (req, res, next) => {
-    if (gatewayManager.isRunning()) return next(); // fall through to proxy below
-    res.redirect('/setup');
-  });
-
-  // /ui/* kept for backwards compat — redirect to /
-  app.use('/ui', (req, res) => res.redirect('/' + (req.url || '').replace(/^\//, '')));
-
-  // Login page
-  app.get('/login', (req, res) => {
-    if (!config.WRAPPER_ADMIN_PASSWORD) return res.redirect('/admin');
-    const returnTo = req.query.returnTo || '/admin';
+  app.get('/login',(req,res)=>{
+    res.setHeader('Cache-Control','no-store');
+    if(!WRAPPER_ADMIN_PASSWORD) return res.status(503).type('text/plain').send('Set WRAPPER_ADMIN_PASSWORD in your Railway service variables, then redeploy to enable setup and administration.');
+    const returnTo = escapeHtml(sanitizeReturnTo(req.query.returnTo));
     res.send(`<!DOCTYPE html><html><head><meta charset="UTF-8">
 <title>OpenClaw Login</title>
 <style>*{box-sizing:border-box;margin:0;padding:0}
@@ -139,91 +95,96 @@ ${req.query.err ? '<p class="err">Incorrect password</p>' : ''}
 <p style="margin-top:16px;font-size:11px;color:#6b7688;text-align:center;line-height:1.6">This is the <span style="color:#f0883e">WRAPPER_ADMIN_PASSWORD</span> environment variable set in your Railway service variables.</p>
 </div></body></html>`);
   });
-
-  app.post('/login', express.urlencoded({ extended: false }), (req, res) => {
-    const { password, returnTo = '/admin' } = req.body;
-    if (!config.WRAPPER_ADMIN_PASSWORD || password === config.WRAPPER_ADMIN_PASSWORD) {
-      setAuthCookie(res, password);
+  app.post('/login',(req,res)=>{
+    if(!WRAPPER_ADMIN_PASSWORD) return res.status(503).json({ok:false,error:'Set WRAPPER_ADMIN_PASSWORD to enable administration.'});
+    if(req.headers.origin && !isAdminOriginAllowed(req)) return res.status(403).json({ok:false,error:'Sign in from this deployment.'});
+    const returnTo = sanitizeReturnTo(req.body?.returnTo);
+    if(passwordsEqual(req.body?.password,WRAPPER_ADMIN_PASSWORD)){
+      setAuthCookie(res,req.body.password,req);
       return res.redirect(returnTo);
     }
-    const r = encodeURIComponent(returnTo);
-    res.redirect(`/login?returnTo=${r}&err=1`);
+    res.redirect(`/login?returnTo=${encodeURIComponent(returnTo)}&err=1`);
+  });
+  app.get('/logout',(req,res)=>{clearAuthCookie(res,req);res.redirect('/login');});
+  app.get('/admin',requireAdminAuth,(_req,res)=>res.sendFile(path.join(publicDir,'admin.html')));
+  app.use('/ui',(req,res)=>res.redirect('/'+(req.url||'').replace(/^\//,'')));
+  app.get('/',async (_req,res,next)=>{
+    if(isOperationActive() || getBootFailure()) return unavailable(res);
+    if(await config.isAlreadyConfigured()) return next();
+    res.redirect('/setup');
+  });
+  app.use((req,res,next)=>{
+    if(isOperationActive() || getBootFailure()) return unavailable(res);
+    if(!gatewayManager.isRunning()) return unavailable(res);
+    req.url = req.originalUrl;
+    gatewayManager.getHttpProxy().web(req,res);
+  });
+  app.use((error,_req,res,_next)=>{
+    if(res.headersSent) return res.end();
+    const status = Number.isInteger(error.status) && error.status>=400 && error.status<=599 ? error.status : 500;
+    const bodyError = error.type === 'entity.parse.failed' || status === 413;
+    log.error('Request failed:',bodyError ? (error.type || 'request body limit') : error.message);
+    const message = status===500 ? 'The operation failed. Review the server logs before retrying.'
+      : bodyError ? (status===413 ? 'Request body is too large.' : 'Invalid request body.') : error.message;
+    res.status(status).json({ok:false,error:message});
   });
 
-  app.get('/logout', (req, res) => {
-    clearAuthCookie(res);
-    res.redirect('/login');
-  });
-
-  // Admin dashboard
-  app.get('/admin', requireAdminAuth, async (req, res) => {
-    if (!(await config.isAlreadyConfigured())) {
-      return res.redirect('/setup');
-    }
-    res.sendFile(path.join(__dirname, '../public/admin.html'));
-  });
-
-  // ── Catch-all proxy — MUST be last ────────────────────────────
-  // All our own routes (/api, /setup, /admin, /login, /logout, /ws)
-  // are registered above. Everything else proxies to openclaw gateway.
-  app.use('/', proxyMiddleware);
-
-  // ── WebSocket services ─────────────────────────────────────────
-  // Initialize terminal WSS (registers connection handler, but NOT
-  // an upgrade listener — we use noServer mode).
   attachTerminalWebSocket(httpServer);
-
-  // Single upgrade handler — routes /ws/terminal to terminal WSS,
-  // everything else to gateway WS proxy. This avoids the ws library's
-  // abortHandshake(400) which would destroy non-terminal sockets.
-  httpServer.on('upgrade', (req, socket, head) => {
-    const url = req.url || '';
-
-    if (url.startsWith('/ws/terminal')) {
-      terminalWss.handleUpgrade(req, socket, head, (ws) => {
-        terminalWss.emit('connection', ws, req);
-      });
+  httpServer.on('upgrade',(req,socket,head)=>{
+    let pathname;
+    try {pathname=new URL(req.url,'http://wrapper.invalid').pathname;}catch{socket.destroy();return;}
+    if(isOperationActive() || getBootFailure()){
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');return;
+    }
+    if(pathname==='/ws/terminal'){
+      if(!isAdminAuthenticated(req) || !isAdminOriginAllowed(req)){
+        socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');return;
+      }
+      if(!gatewayManager.isRunning()){
+        socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');return;
+      }
+      terminalWss.handleUpgrade(req,socket,head,(ws)=>terminalWss.emit('connection',ws,req));
       return;
     }
-
-    // Everything else → gateway WS proxy
-    gatewayManager.handleWsUpgrade(req, socket, head);
+    gatewayManager.handleWsUpgrade(req,socket,head);
   });
-
-  // ── Start listening ────────────────────────────────────────────
-  const PORT = config.PORT;
-  httpServer.listen(PORT, '0.0.0.0', () => {
-    log.info(`🦞 openclaw-railway listening on port ${PORT}`);
-  });
-
-  // ── Auto-launch if already configured ─────────────────────────
-  if (await config.isAlreadyConfigured()) {
-    log.info('Existing config found — launching OpenClaw gateway automatically...');
-    try {
-      await gatewayManager.start();
-    } catch (err) {
-      log.error('Auto-launch failed:', err.message);
-    }
-  } else {
-    log.info('No config found — serving Setup UI at /setup');
-  }
-
-  // ── Graceful shutdown ──────────────────────────────────────────
-  const shutdown = async (signal) => {
-    log.info(`Received ${signal} — shutting down...`);
-    await gatewayManager.stop();
-    httpServer.close(() => {
-      log.info('HTTP server closed. Goodbye.');
-      process.exit(0);
-    });
-    setTimeout(() => process.exit(1), 10_000).unref();
-  };
-
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT',  () => shutdown('SIGINT'));
+  return {app,httpServer};
 }
-
-main().catch((err) => {
-  console.error('Fatal startup error:', err);
-  process.exit(1);
-});
+export async function startServer() {
+  assertPinnedRuntime();
+  try {
+    await recoverBeforeStartup();
+    await recoverConfigEdit();
+  } catch(error) {
+    setBootFailure('Recovery needs attention; original snapshots are retained. Review logs before retrying.');
+    log.error('Startup recovery:',error.message);
+  }
+  try {initializeGatewayToken();}catch(error){setBootFailure('Stored configuration needs attention before startup.');log.error(error.message);}
+  gatewayManager.setPreflight(prepareGateway);
+  const {app,httpServer}=createApp();
+  await new Promise((resolve,reject)=>{httpServer.once('error',reject);httpServer.listen(PORT,'0.0.0.0',resolve);});
+  log.info(`OpenClaw Railway listening on ${PORT}`);
+  let boot = Promise.resolve();
+  if(await config.isAlreadyConfigured() && !getBootFailure()){
+    boot=runBootUpgrade().then(()=>pairingService.startWatching()).catch(error=>log.error('Boot upgrade:',error.message));
+  }
+  let stopping=false;
+  async function shutdown(){
+    if(stopping)return;
+    stopping=true;
+    const deadline=setTimeout(()=>process.exit(1),355000);deadline.unref();
+    await stopOperations();
+    pairingService.stopWatching();
+    await stopAllTerminalSessions();
+    await gatewayManager.shutdown();
+    httpServer.closeAllConnections();
+    await new Promise(resolve=>httpServer.close(resolve));
+    clearTimeout(deadline);
+  }
+  return {app,httpServer,boot,shutdown};
+}
+if(process.argv[1] && path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+  startServer().then(({shutdown})=>{
+    for(const signal of ['SIGTERM','SIGINT'])process.once(signal,()=>shutdown().then(()=>process.exit(0)).catch(error=>{log.error(error.message);process.exit(1);}));
+  }).catch(error=>{console.error('Startup failed:',error.message);process.exit(1);});
+}

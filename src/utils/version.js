@@ -1,102 +1,44 @@
-/**
- * utils/version.js
- *
- * Reports the OpenClaw version situation for the setup/admin UI:
- *  - which version is actually installed in the image (from `entry.js --version`)
- *  - what the deployer pinned via the OPENCLAW_VERSION build arg
- *  - whether the Docker build auto-bumped an old pin up to the compatibility floor
- *
- * The build records its decision in /app/openclaw-build-info.json (written by the
- * Dockerfile). At runtime we can't change the installed version — this module is
- * purely for surfacing what happened so users understand any auto-bump.
- */
+import fs from 'node:fs';
+import path from 'node:path';
+import { OPENCLAW_ENTRY } from '../config/index.js';
 
-import { execFileSync } from 'child_process';
-import fs from 'fs';
-import path from 'path';
-import { OPENCLAW_ENTRY, OPENCLAW_NODE } from '../config/index.js';
-import { log } from './log.js';
+const manifest = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+export const PINNED_OPENCLAW_VERSION = manifest.openclawVersion;
+if (!/^\d{4}\.\d+\.\d+$/.test(PINNED_OPENCLAW_VERSION || '')) throw new Error('package.json must pin an exact OpenClaw release');
+export const MIN_VERSION = PINNED_OPENCLAW_VERSION;
+process.env.OPENCLAW_VERSION = PINNED_OPENCLAW_VERSION;
+for (const key of ['OPENCLAW_REQUESTED_VERSION', 'OPENCLAW_MINIMUM_VERSION', 'OPENCLAW_VERSION_BUMPED', 'OPENCLAW_EFFECTIVE_VERSION']) delete process.env[key];
+process.env.OPENCLAW_NO_AUTO_UPDATE = '1';
 
-// Minimum OpenClaw version this template's code is compatible with.
-// Keep in sync with ARG OPENCLAW_MIN_VERSION in the Dockerfile.
-export const MIN_VERSION = '2026.6.6';
-
-let _installed;       // cached parsed version string | null
-let _versionInfo;     // cached getVersionInfo() result
-
-/**
- * Compare two CalVer strings (YYYY.M.P). Pre-release suffixes (-beta.1) are
- * ignored for ordering. Returns -1 if a < b, 0 if equal, 1 if a > b.
- */
-export function compareCalVer(a, b) {
-  const norm = (v) => String(v).split('-')[0].split('.').map((n) => parseInt(n, 10) || 0);
-  const A = norm(a);
-  const B = norm(b);
-  const len = Math.max(A.length, B.length);
-  for (let i = 0; i < len; i++) {
-    const x = A[i] || 0;
-    const y = B[i] || 0;
-    if (x < y) return -1;
-    if (x > y) return 1;
-  }
-  return 0;
-}
-
-/** Actual installed OpenClaw version (e.g. "2026.6.6"), or null if undetectable. */
-export function getInstalledOpenclawVersion() {
-  if (_installed !== undefined) return _installed;
-  try {
-    const out = execFileSync(OPENCLAW_NODE, [OPENCLAW_ENTRY, '--version'], {
-      encoding: 'utf8',
-      timeout: 10_000,
-      stdio: ['ignore', 'pipe', 'ignore'], // capture stdout, silence child stderr
-    });
-    const m = out.match(/(\d{4}\.\d+\.\d+(?:-[\w.]+)?)/);
-    _installed = m ? m[1] : null;
-  } catch (err) {
-    log.warn(`Could not read installed openclaw version: ${err.message}`);
-    _installed = null;
-  }
-  return _installed;
-}
-
-/** Build-time decision written by the Dockerfile, or null (e.g. local dev). */
-function readBuildInfo() {
-  const candidates = [
-    path.join(process.cwd(), 'openclaw-build-info.json'),
-    '/app/openclaw-build-info.json',
-  ];
-  for (const p of candidates) {
+export function findOpenclawRoot(entry = OPENCLAW_ENTRY) {
+  let directory = path.dirname(path.resolve(entry));
+  for (let count = 0; count < 5; count++) {
     try {
-      return JSON.parse(fs.readFileSync(p, 'utf8'));
-    } catch { /* try next */ }
+      const candidate = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
+      if (candidate.name === 'openclaw') return directory;
+    } catch {}
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
   }
-  return null;
+  throw new Error('Cannot locate the installed OpenClaw package');
 }
-
-/**
- * Summary for the UI:
- *  - installed:  actual installed version (ground truth)
- *  - min:        minimum the template supports
- *  - requested:  what the deployer pinned (OPENCLAW_VERSION), if known
- *  - bumped:     true if the build auto-installed `min` instead of an older pin
- *  - belowMin:   true if the *installed* version is still below `min`
- *                (a safety-net: should be false once a rebuild applies the floor)
- */
-export function getVersionInfo() {
-  if (_versionInfo) return _versionInfo;
-  const build = readBuildInfo();
+export function getInstalledOpenclawVersion() {
+  return JSON.parse(fs.readFileSync(path.join(findOpenclawRoot(), 'package.json'), 'utf8')).version;
+}
+export function assertPinnedRuntime() {
   const installed = getInstalledOpenclawVersion();
-  const min = (build && build.min) || MIN_VERSION;
-  const isConcrete = installed && /^\d{4}\.\d+\.\d+$/.test(installed);
-  const belowMin = isConcrete ? compareCalVer(installed, min) < 0 : false;
-
-  _versionInfo = {
-    installed: installed || null,
-    min,
-    requested: build ? build.requested : null,
-    bumped: build ? Boolean(build.bumped) : false,
-    belowMin,
-  };
-  return _versionInfo;
+  if (installed !== PINNED_OPENCLAW_VERSION) throw new Error(`Installed OpenClaw ${installed} does not match branch pin ${PINNED_OPENCLAW_VERSION}; rebuild the image before opening persistent data`);
+  return installed;
+}
+export function getVersionInfo() {
+  let installed = null;
+  try { installed = getInstalledOpenclawVersion(); } catch {}
+  return { pinned: PINNED_OPENCLAW_VERSION, installed, effective: installed, source: 'branch',
+    min: PINNED_OPENCLAW_VERSION, requested: null, bumped: false, belowMin: Boolean(installed && installed !== PINNED_OPENCLAW_VERSION) };
+}
+export function compareCalVer(a, b) {
+  const aa = String(a).split('-')[0].split('.').map(Number), bb = String(b).split('-')[0].split('.').map(Number);
+  for (let i=0;i<3;i++) if ((aa[i] || 0) !== (bb[i] || 0)) return (aa[i] || 0) < (bb[i] || 0) ? -1 : 1;
+  return 0;
 }
